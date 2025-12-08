@@ -1,0 +1,8 @@
+# Development dependencies
+-r requirements.txt
+
+# Development tools
+ipython==8.20.0
+django-debug-toolbar==4.3.0
+django-extensions==3.2.3
+

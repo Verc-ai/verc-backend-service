@@ -1,0 +1,175 @@
+You are evaluating the quality and compliance of a customer service call for Buffalo Acceptance Corporation.
+
+**IMPORTANT: UNDERSTANDING PII REDACTION IN TRANSCRIPTS**
+The transcript below may contain redacted personally identifiable information (PII) shown in square brackets like [PERSON_NAME], [COMPANY_NAME], [ADDRESS], etc.
+These redaction tags indicate that sensitive information WAS PRESENT in the original conversation but has been masked for privacy.
+When evaluating compliance and agent performance:
+- [PERSON_NAME] means the agent DID use the customer's actual name
+- Multiple [PERSON_NAME] instances confirm identification by first and last name
+- Treat redaction tags as PROOF that the action was performed correctly
+- Score based on the presence of these tags, not their absence
+
+EVALUATION CRITERIA:
+
+1. **Per-Transcript Sentiment Analysis**: Analyze sentiment for EACH transcript utterance
+   - For every transcript ID provided, assign a sentiment score (0-100)
+   - 0 = very negative, 50 = neutral, 100 = very positive
+   - Analyze both customer AND agent sentiment
+   - Return array of {{transcript_id, sentiment_score}} objects
+
+2. **Detected Intents**: Identify ALL applicable call intents from this list:
+   - Make Payment
+   - Due Date Change
+   - Collections
+   - Update Account Information
+   - Complaint
+   - Billing Inquiry
+   - General Inquiry
+
+3. **Flagged Keywords Detection**:
+   Check if ANY of these keywords were mentioned in the conversation:
+   - legal
+   - attorney general
+   - better business bureau
+   - BBB
+   - CFPB
+   - repossession
+
+   Return array of detected keywords (empty array if none found).
+
+4. **Agent Performance Scoring**: Evaluate across four categories
+
+   ============================================
+   COMPLIANCE SCORE (4 questions, each 0-10)
+   ============================================
+
+   **IMPORTANT: PII REDACTION RECOGNITION**
+   The transcript may contain redacted personally identifiable information (PII) in the format [PERSON_NAME], [COMPANY_NAME], [ADDRESS], etc.
+   - If you see [PERSON_NAME] in the transcript, this means the agent DID use the customer's actual name
+   - If you see multiple instances of [PERSON_NAME], this confirms identification by first and last name
+   - Redaction tags are PROOF that the information was present in the original conversation
+   - Score accordingly: presence of redaction = the agent DID perform that action
+
+   1. Did the account manager identify the customer by their first and last name? (0-10)
+   2. Did the account manager identify themself? (0-10)
+   3. Did the account manager identify the company name (Buffalo Acceptance Corporation)? (0-10)
+   4. Did the account manager complete the verification process? (0-10)
+
+   **Scoring Guide for each question:**
+   - 10: Fully completed, clear and professional
+   - 7-9: Mostly completed with minor issues
+   - 4-6: Partially completed or unclear
+   - 1-3: Attempted but poorly executed
+   - 0: Not done at all
+
+   **Overall Score Calculation:** (sum of all 4 question scores / 40) × 100
+
+   ============================================
+   SERVICING SCORE (7 questions, each 0-10)
+   ============================================
+
+   1. Did the account manager acknowledge and address the customer's issue and provide solutions? (0-10)
+   2. Did the account manager answer the call in an upbeat, outgoing, professional manner? (0-10)
+   3. Did the account manager express empathy and understanding towards the customer's situation? (0-10)
+   4. Was it clear and easy to understand what the account manager is communicating? (0-10)
+   5. Did the account manager actively listen to the customer's concerns and demonstrate understanding? (0-10)
+   6. Did the account manager maintain a courteous and professional tone throughout the call? (0-10)
+   7. Did the account manager appear to be knowledgeable about the loan balance, amount due, past due or payment required? (0-10)
+
+   **Scoring Guide for each question (STRICT/HARSH GRADING):**
+   - 10: Exceptional - Exceeded expectations with outstanding professionalism and effectiveness
+   - 8-9: Excellent - Fully met all criteria with clear professionalism
+   - 6-7: Good - Met most criteria but had minor issues or could improve
+   - 4-5: Adequate - Met some criteria but had noticeable gaps or issues
+   - 2-3: Poor - Attempted but significant deficiencies or unprofessional
+   - 0-1: Unacceptable - Not done or completely inadequate
+
+   **IMPORTANT:** Be strict and critical. Reserve 10s for truly exceptional performance. Most good calls should score 6-8.
+
+   **Overall Score Calculation:** (sum of all 7 question scores / 70) × 100
+
+   ============================================
+   COLLECTIONS SCORE (4 weighted questions)
+   ============================================
+
+   **CRITICAL: Only evaluate this section if the call intent is "Collections".**
+   **If NOT Collections, set all answers to null, all scores to null, and overall_score to null.**
+
+   If Collections intent detected:
+
+   1. Was a payment taken?
+      - Answer: true/false
+      - Score: 20 if true, 0 if false
+
+   2. Was a promise to pay set?
+      - Answer: true/false
+      - Score: 10 if true, 0 if false
+
+   3. Was a deferment given?
+      - Answer: true/false
+      - Score: 10 if true, 0 if false
+
+   4. Was a tag given?
+      - Answer: true/false
+      - Score: 10 if true, 0 if false
+
+   **Overall Score Calculation:** (sum of all points / 50) × 100
+   **Maximum possible: 50 points = 100%**
+
+   ============================================
+   LEGAL ISSUES DETECTION (Boolean Flag)
+   ============================================
+
+   Determine if ANY legal threats or legal action were mentioned during the conversation by either party:
+   - Did the customer threaten legal action?
+   - Did the account manager threaten legal action?
+
+   Return: true if ANY legal threats were detected, false if no legal threats were made
+
+TRANSCRIPT WITH IDS:
+{transcript_with_ids}
+
+Return ONLY valid JSON matching this structure (no markdown, no code blocks):
+{{
+  "transcript_sentiments": [
+    {{ "transcript_id": "uuid-1", "sentiment_score": 45 }},
+    {{ "transcript_id": "uuid-2", "sentiment_score": 50 }},
+    {{ "transcript_id": "uuid-3", "sentiment_score": 65 }}
+  ],
+  "detected_intents": ["Collections", "Make Payment"],
+  "flagged_keywords": ["legal", "repossession"],
+  "agent_score": {{
+    "compliance": {{
+      "questions": [
+        {{ "question": "Did the account manager identify the customer by their first and last name?", "answer": true, "score": 10 }},
+        {{ "question": "Did the account manager identify themself?", "answer": true, "score": 10 }},
+        {{ "question": "Did the account manager identify the company name?", "answer": true, "score": 9 }},
+        {{ "question": "Did the account manager complete the verification?", "answer": true, "score": 10 }}
+      ],
+      "overall_score": 97.5
+    }},
+    "servicing": {{
+      "questions": [
+        {{ "question": "Did the account manager acknowledge and address the customer's issue and provide solutions?", "answer": true, "score": 7 }},
+        {{ "question": "Did the account manager answer the call in an upbeat, outgoing, professional manner?", "answer": true, "score": 6 }},
+        {{ "question": "Did the account manager express empathy and understanding towards the customer's situation?", "answer": true, "score": 8 }},
+        {{ "question": "Was it clear and easy to understand what the account manager is communicating?", "answer": true, "score": 7 }},
+        {{ "question": "Did the account manager actively listen to the customer's concerns and demonstrate understanding?", "answer": true, "score": 7 }},
+        {{ "question": "Did the account manager maintain a courteous and professional tone throughout the call?", "answer": true, "score": 8 }},
+        {{ "question": "Did the account manager appear to be knowledgeable about the loan balance, amount due, past due or payment required?", "answer": true, "score": 6 }}
+      ],
+      "overall_score": 70
+    }},
+    "collections": {{
+      "questions": [
+        {{ "question": "Was a payment taken?", "answer": true, "score": 20 }},
+        {{ "question": "Was a promise to pay set?", "answer": false, "score": 0 }},
+        {{ "question": "Was a deferment given?", "answer": false, "score": 0 }},
+        {{ "question": "Was a tag given?", "answer": true, "score": 10 }}
+      ],
+      "overall_score": 60
+    }}
+  }},
+  "legal_issues_detected": false
+}}
+

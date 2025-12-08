@@ -1,0 +1,118 @@
+You are analyzing a customer service call transcript for Buffalo Acceptance Corporation.
+
+CONVERSATION SIZE: Approximately {word_count} words
+
+SUMMARY LENGTH REQUIREMENT:
+{length_instruction}
+
+IMPORTANT GUIDELINES:
+- Write in sharp, direct, professional business language
+- Use SHORT, CLEAR sentences - no fluff or unnecessary words
+- Be objective and factual - no speculation
+- Include specific details (amounts, dates, actions taken)
+- Structure: What happened → What was done → What was the outcome
+- Maintain professional tone throughout
+- Do NOT use bullet points in the summary text
+- Write naturally flowing paragraphs with CONCISE phrasing
+- Avoid wordiness - get straight to the point
+- Use active voice and strong verbs
+
+EXTRACT THE FOLLOWING:
+
+1. **title**: A clear, professional 5-8 word title that captures the essence of this call
+   Examples:
+   - "Payment Inquiry and Account Investigation"
+   - "Late Payment Discussion and Resolution"
+   - "Billing Dispute and Documentation Request"
+
+2. **summary**: {length_instruction}
+   - START with: "Customer called to..." or "Agent called to..." (drop unnecessary words)
+   - State the INTENT/PURPOSE directly - no preamble
+   - Describe key DISCUSSION POINTS in chronological order using SHORT, CLEAR sentences
+   - List specific ACTIONS TAKEN by agent and/or customer - use strong verbs
+   - Conclude with the OUTCOME/RESOLUTION - be definitive
+   - Include specific details: dates, amounts, timeframes, next steps
+   - Be thorough and detailed for longer conversations BUT remain concise
+   - Use natural paragraph breaks for readability
+   - Cut unnecessary words - every sentence should be sharp and direct
+
+3. **direction**: Classify the call direction based on who initiated contact
+   - "inbound": Customer called the company
+   - "outbound": Company/agent called the customer
+   IMPORTANT: Analyze the conversation context to determine who initiated the call.
+
+4. **action_codes**: Array of 1-5 SPECIFIC actions that were performed during the call
+   Choose ONLY from these standardized codes (use code abbreviation):
+   - "CO" - Comment Only
+   - "DT" - Debtor Called In
+   - "EML" - Emailed
+   - "GPS" - GPS Info
+   - "KI" - Verified Insurance
+   - "OC" - Other Called In
+   - "RI" - Received Insurance
+   - "RS" - Respond to SR
+   - "SKP" - Skiptrace
+   - "SR" - Supervisor Review
+   - "TC" - Telephoned Cell
+   - "TE" - Telephoned Employer
+   - "TI" - Telephoned Insurance
+   - "TO" - Telephoned Other
+   - "TR" - Telephoned Residence
+   - "TXT" - Texting
+   - "UC" - Unable to Contact
+   IMPORTANT: Only include actions that ACTUALLY occurred in this specific call. Return the CODE ONLY (e.g., "TC", "EML").
+
+5. **result_codes**: Array of 1-3 outcomes that describe how the call ended
+   Choose ONLY from these standardized codes (use code abbreviation):
+   - "BKN" - Bankruptcy
+   - "BZ" - Busy
+   - "CO" - Comment Only
+   - "DA" - Disputes Account
+   - "DIS" - Disconnected
+   - "EI" - Entered Insurance
+   - "FU" - Follow Up
+   - "LM" - Left Message
+   - "MP" - Made Payment
+   - "NA" - No Answer
+   - "PP" - Promise to Pay
+   - "SKP" - Skiptrace
+   - "SL" - Sent Letter
+   - "SR" - Supervisor Review
+   - "STP" - Stop
+   - "TO" - Talked to Other
+   - "TT" - Talked to Customer
+   - "UI" - Update Insurance
+   - "WN" - Wrong Number
+   IMPORTANT: Select outcomes that accurately reflect the END STATE of this call. Return the CODE ONLY (e.g., "MP", "TT").
+
+6. **intent_tags**: Array of 2-4 short intent tags (lowercase, hyphenated)
+   Examples: "billing inquiry", "payment arrangement", "complaint resolution", "account dispute"
+
+7. **keywords**: Array of 10-15 important terms from the conversation
+   Examples: "payment", "due date", "billing cycle", "late fee", "dispute", "investigation"
+
+8. **notes**: Short, direct notes (1-3 lines max) capturing key observations
+   - Write in note-taking style: bullet fragments, short phrases
+   - Focus on: follow-ups needed, issues flagged, customer mood, escalations
+   - Be brief and actionable
+   Examples:
+   - "Cust frustrated initially - resolved. Follow-up: email confirmation sent."
+   - "Payment discrepancy found - escalated to manager for review by EOD."
+   - "Promised callback within 3 business days. Account tagged."
+   If nothing notable, write: "No issues."
+
+TRANSCRIPT:
+{transcript}
+
+Return ONLY valid JSON matching this structure (no markdown, no code blocks):
+{{
+  "title": "...",
+  "summary": "...",
+  "direction": "inbound",
+  "action_codes": ["...", "..."],
+  "result_codes": ["...", "..."],
+  "intent_tags": ["...", "..."],
+  "keywords": ["...", "..."],
+  "notes": "..."
+}}
+
