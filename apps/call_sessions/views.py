@@ -232,23 +232,168 @@ class SessionListView(APIView):
 
 class SessionDetailView(APIView):
     permission_classes = [AllowAny]  # Allow access with mock tokens
-    
+
     """
     GET /api/sessions/{id}
-    Get call session details.
-    Frontend expects: session object with all call details
+    Get call session details with transcription events, summary, and scorecard.
+    Frontend expects: full session object with events, audio URL, summary, scorecard
     """
     def get(self, request, session_id):
-        # TODO: Implement session detail retrieval from Supabase
-        # For now, return a mock response
-        return Response({
-            'id': session_id,
-            'status': 'transcribed',
-            'transcription': [],
-            'summary': None,
-            'scorecard': None,
-            'metadata': {}
-        }, status=status.HTTP_200_OK)
+        supabase = get_supabase_client()
+
+        if not supabase:
+            logger.error('Supabase client not available')
+            return Response({
+                'error': 'Storage service not available'
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            config = settings.APP_SETTINGS.supabase
+
+            logger.info(f'Fetching session details for: {session_id}')
+
+            # Fetch session data from transcription_sessions table
+            session_response = supabase.table(config.sessions_table)\
+                .select('*')\
+                .eq('id', session_id)\
+                .single()\
+                .execute()
+
+            if not session_response.data:
+                logger.warning(f'Session not found: {session_id}')
+                return Response({
+                    'error': 'Session not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            session_data = session_response.data
+            logger.info(f'Session found: {session_id}, status={session_data.get("status")}')
+
+            # Fetch all transcription events for this session
+            events_response = supabase.table(config.events_table)\
+                .select('*')\
+                .eq('session_id', session_id)\
+                .order('received_at', desc=False)\
+                .execute()
+
+            events = events_response.data or []
+            logger.info(f'Found {len(events)} transcription events for session {session_id}')
+
+            # Transform events to frontend format
+            transcription = []
+            for event in events:
+                transcription.append({
+                    'id': event.get('id'),
+                    'text': event.get('text'),
+                    'speaker': event.get('speaker'),
+                    'timestamp': event.get('received_at'),
+                    'payload': event.get('payload'),
+                    'pii_redacted': event.get('pii_redacted', False),
+                    'pii_entities_detected': event.get('pii_entities_detected'),
+                    'sentiment_score': event.get('sentiment_score')
+                })
+
+            # Generate signed URL for audio if storage path exists
+            audio_url = None
+            audio_storage_path = session_data.get('audio_storage_path')
+            if audio_storage_path:
+                try:
+                    logger.info(f'Generating signed URL for: {audio_storage_path}')
+                    signed_url_response = supabase.storage\
+                        .from_(config.audio_bucket)\
+                        .create_signed_url(audio_storage_path, expires_in=3600)
+
+                    # Handle different response formats
+                    if hasattr(signed_url_response, 'data') and isinstance(signed_url_response.data, dict):
+                        audio_url = signed_url_response.data.get('signedURL')
+                    elif hasattr(signed_url_response, 'signedURL'):
+                        audio_url = signed_url_response.signedURL
+                    elif isinstance(signed_url_response, dict):
+                        audio_url = signed_url_response.get('signedURL')
+
+                    if audio_url:
+                        logger.info(f'Signed URL generated successfully')
+                    else:
+                        logger.warning(f'Signed URL response format unexpected: {type(signed_url_response)}')
+                except Exception as e:
+                    logger.warning(f'Failed to generate signed URL for audio: {e}')
+
+            # Extract metadata
+            metadata = session_data.get('metadata', {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            # Build comprehensive response matching Verc-production format
+            response_data = {
+                # Core session info
+                'id': session_data.get('id'),
+                'created_at': session_data.get('created_at'),
+                'last_event_received_at': session_data.get('last_event_received_at'),
+                'status': session_data.get('status', 'created'),
+                'metadata': metadata,
+
+                # Phone numbers
+                'caller_number': session_data.get('caller_number'),
+                'dialed_number': session_data.get('dialed_number'),
+
+                # Multi-tenant fields
+                'user_id': session_data.get('user_id'),
+                'org_id': session_data.get('org_id'),
+
+                # Audio
+                'audio_storage_path': audio_storage_path,
+                'audio_url': audio_url,
+
+                # Transcription events
+                'transcription': transcription,
+                'events': transcription,  # Alias for compatibility
+                'turn_count': len(transcription),
+
+                # Calculate duration if possible
+                'duration': metadata.get('duration') or self._calculate_duration(
+                    session_data.get('created_at'),
+                    session_data.get('last_event_received_at')
+                ),
+
+                # AI Summary
+                'call_summary_status': session_data.get('call_summary_status', 'not_started'),
+                'call_summary_data': session_data.get('call_summary_data'),
+                'call_summary_error': session_data.get('call_summary_error'),
+                'call_summary_generated_at': session_data.get('call_summary_generated_at'),
+
+                # AI Scorecard
+                'call_scorecard_status': session_data.get('call_scorecard_status', 'not_started'),
+                'call_scorecard_data': session_data.get('call_scorecard_data'),
+                'call_scorecard_error': session_data.get('call_scorecard_error'),
+                'call_scorecard_generated_at': session_data.get('call_scorecard_generated_at'),
+
+                # PII Redaction
+                'pii_redacted': any(e.get('pii_redacted', False) for e in events),
+                'redacted_audio_url': session_data.get('redacted_audio_url'),
+            }
+
+            logger.info(f'Returning session details: {len(transcription)} events, audio_url={bool(audio_url)}')
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f'Error fetching session {session_id}: {e}', exc_info=True)
+            import traceback
+            logger.error(f'Traceback: {traceback.format_exc()}')
+            return Response({
+                'error': f'Failed to fetch session: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _calculate_duration(self, created_at, last_event_at):
+        """Calculate session duration in seconds."""
+        if not created_at or not last_event_at:
+            return None
+
+        try:
+            from datetime import datetime
+            last_event = datetime.fromisoformat(last_event_at.replace('Z', '+00:00'))
+            created = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            return int((last_event - created).total_seconds())
+        except Exception:
+            return None
 
 
 class GenerateSummaryView(APIView):

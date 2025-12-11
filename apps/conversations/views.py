@@ -432,33 +432,76 @@ class SignedUrlView(APIView):
                 storage_path,
                 expires_in=3600  # 1 hour
             )
-            
+
+            # Debug logging to see actual response format
+            import sys
+            print(f'[SIGNED_URL] Response type: {type(signed_url_response)}', file=sys.stderr, flush=True)
+            print(f'[SIGNED_URL] Response: {repr(signed_url_response)[:500]}', file=sys.stderr, flush=True)
+
             # Handle different response formats
             signed_url = None
+
+            # Check for error first
             if hasattr(signed_url_response, 'error') and signed_url_response.error:
                 logger.warning(f'Failed to generate signed URL: {signed_url_response.error}')
                 return Response({
                     'error': f'Failed to generate signed URL: {signed_url_response.error}'
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            elif hasattr(signed_url_response, 'signedURL'):
-                signed_url = signed_url_response.signedURL
+
+            # Try different response formats
+            # Format 1: Direct dict response
+            if isinstance(signed_url_response, dict):
+                signed_url = (
+                    signed_url_response.get('signedURL') or
+                    signed_url_response.get('signedUrl') or
+                    signed_url_response.get('signed_url')
+                )
+                print(f'[SIGNED_URL] Dict format, keys: {list(signed_url_response.keys())}', file=sys.stderr, flush=True)
+            # Format 2: Object with .data attribute
             elif hasattr(signed_url_response, 'data'):
                 data = signed_url_response.data
-                signed_url = data.get('signedURL') if isinstance(data, dict) else getattr(data, 'signedURL', None)
-            
+                if isinstance(data, dict):
+                    signed_url = (
+                        data.get('signedURL') or
+                        data.get('signedUrl') or
+                        data.get('signed_url')
+                    )
+                    print(f'[SIGNED_URL] Data dict format, keys: {list(data.keys())}', file=sys.stderr, flush=True)
+                else:
+                    signed_url = (
+                        getattr(data, 'signedURL', None) or
+                        getattr(data, 'signedUrl', None) or
+                        getattr(data, 'signed_url', None)
+                    )
+            # Format 3: Direct attribute
+            elif hasattr(signed_url_response, 'signedURL'):
+                signed_url = signed_url_response.signedURL
+            elif hasattr(signed_url_response, 'signedUrl'):
+                signed_url = signed_url_response.signedUrl
+            elif hasattr(signed_url_response, 'signed_url'):
+                signed_url = signed_url_response.signed_url
+
             if not signed_url:
-                logger.error('Failed to extract signed URL from response')
+                logger.error(
+                    f'Failed to extract signed URL from response. '
+                    f'Type: {type(signed_url_response)}, Repr: {repr(signed_url_response)[:200]}'
+                )
+                print(f'[SIGNED_URL] ERROR: Could not find signed URL in response', file=sys.stderr, flush=True)
                 return Response({
                     'error': 'Failed to generate signed URL - unexpected response format'
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            logger.info(f'Generated signed URL for {storage_path}')
+
+            logger.info(f'✅ Generated signed URL successfully')
+            print(f'[SIGNED_URL] SUCCESS: Extracted URL', file=sys.stderr, flush=True)
+            # Frontend expects { url: string } format (see types.ts:114)
             return Response({
-                'signedUrl': signed_url
+                'url': signed_url  # Changed from 'signedUrl' to 'url'
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             logger.error(f'Error generating signed URL: {e}', exc_info=True)
+            import traceback
+            print(f'[SIGNED_URL] EXCEPTION: {traceback.format_exc()}', file=sys.stderr, flush=True)
             return Response({
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
