@@ -172,30 +172,44 @@ class SessionListView(APIView):
                 if turn_count == 0 and row.get('metadata') and isinstance(row.get('metadata'), dict):
                     turn_count = row['metadata'].get('turn_count', 0)
                 
-                # Calculate duration if not already calculated above
+                # Get status from database column (NOT metadata)
+                # Supabase stores status as a column, managed by state machine
+                session_status = row.get('status', 'created')
+
+                # Fallback: If status column is null, derive from events
+                if not session_status or session_status == 'created':
+                    if row.get('last_event_received_at'):
+                        # Has transcription events
+                        if row.get('call_summary_status') == 'completed' and row.get('call_scorecard_status') == 'completed':
+                            session_status = 'completed'
+                        elif row.get('call_summary_status') == 'in_progress' or row.get('call_scorecard_status') == 'in_progress':
+                            session_status = 'analyzing'
+                        else:
+                            session_status = 'transcribed'
+
+                # Get duration from metadata (where simulator stores it), not calculated
+                metadata = row.get('metadata', {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+
+                duration = metadata.get('duration')
                 if duration is None:
+                    # Fallback: Calculate from timestamps
                     duration = calculate_session_duration(
                         row.get('created_at'),
                         row.get('last_event_received_at')
                     )
-                
-                # Derive status from metadata or use default
-                session_status = 'created'
-                if row.get('metadata') and isinstance(row.get('metadata'), dict):
-                    session_status = row['metadata'].get('status', 'created')
-                elif row.get('last_event_received_at'):
-                    session_status = 'transcribed'
-                
+
                 # Get caller number
                 caller_number = row.get('caller_number')
-                if not caller_number and row.get('metadata') and isinstance(row.get('metadata'), dict):
-                    caller_number = row['metadata'].get('caller_number') or row['metadata'].get('from')
-                
+                if not caller_number and metadata:
+                    caller_number = metadata.get('caller_number') or metadata.get('from')
+
                 # Get overall score from scorecard data
                 overall_score = None
                 if row.get('call_scorecard_data') and isinstance(row.get('call_scorecard_data'), dict):
                     overall_score = row['call_scorecard_data'].get('overall_weighted_score')
-                
+
                 session = {
                     'id': row.get('id'),
                     'created_at': row.get('created_at'),
@@ -205,7 +219,7 @@ class SessionListView(APIView):
                     'call_status': session_status,  # Legacy field
                     'status': session_status,
                     'turn_count': turn_count,
-                    'metadata': row.get('metadata'),
+                    'metadata': metadata,
                     'call_summary_status': row.get('call_summary_status', 'not_started'),
                     'call_scorecard_status': row.get('call_scorecard_status', 'not_started'),
                     'overall_weighted_score': overall_score,
