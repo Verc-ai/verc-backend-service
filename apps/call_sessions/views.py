@@ -285,7 +285,8 @@ class SessionDetailView(APIView):
                     'id': event.get('id'),
                     'text': event.get('text'),
                     'speaker': event.get('speaker'),
-                    'timestamp': event.get('received_at'),
+                    'received_at': event.get('received_at'),  # ✅ Correct key name for frontend
+                    'timestamp': event.get('received_at'),     # Keep for backward compatibility
                     'payload': event.get('payload'),
                     'pii_redacted': event.get('pii_redacted', False),
                     'pii_entities_detected': event.get('pii_entities_detected'),
