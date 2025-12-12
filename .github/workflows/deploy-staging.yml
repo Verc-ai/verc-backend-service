@@ -1,13 +1,11 @@
 name: Deploy Staging
 
 on:
-  # Only run after CI workflow completes successfully
+  # Trigger when CI workflow finishes (CI name must match exactly)
   workflow_run:
     workflows: ["CI"]
-    types:
-      - completed
-    branches:
-      - main
+    types: [completed]
+
   # Allow manual trigger
   workflow_dispatch:
 
@@ -23,31 +21,36 @@ permissions:
   id-token: write
 
 jobs:
-  # Check that CI passed before deploying
   check-ci-success:
     name: Verify CI Success
     runs-on: ubuntu-latest
-    # Skip this check for manual triggers
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+
+    # Only run automatically if CI workflow succeeded.
+    # Manual triggers always allowed.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+
     steps:
       - name: CI Success Check
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "⚠️  Manual deployment triggered - skipping CI check"
-            echo "Make sure CI has passed before deploying!"
+            echo "⚠️ Manual deployment triggered — skipping CI gate"
           else
-            echo "✅ CI workflow passed successfully"
-            echo "Proceeding with deployment..."
+            echo "✅ CI workflow passed on branch 'main'"
           fi
 
   deploy:
-    needs: check-ci-success
     name: Build and Deploy
+    needs: check-ci-success
     runs-on: ubuntu-latest
-    # needs: test  # Uncomment when tests are added
+
     defaults:
       run:
         working-directory: infra/envs/staging
+
     steps:
       - uses: actions/checkout@v4
 
