@@ -1,0 +1,164 @@
+name: Deploy
+run-name: Deploy to ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: environment
+        required: true
+        default: staging
+
+  # Automatic staging deploy on push to main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_REGION: us-east4
+  WORKLOAD_IDENTITY_PROVIDER: projects/391319920980/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  SERVICE_ACCOUNT: github-ci@verc-staging.iam.gserviceaccount.com
+
+  # Cloud Run services
+  STAGING_PROJECT: verc-staging
+  PROD_PROJECT: verc-prod
+  STAGING_SERVICE: verc-app-staging
+  PROD_SERVICE: verc-app-prod
+
+jobs:
+  setup-build-publish:
+    runs-on: ubuntu-latest
+
+    # Determine environment:
+    # - If push → staging
+    # - If manual → inputs.environment
+    environment: ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
+
+    outputs:
+      image_path: ${{ steps.build-image.outputs.image_path }}
+      deploy_env: ${{ steps.env-select.outputs.deploy_env }}
+      service_name: ${{ steps.env-select.outputs.service_name }}
+      project_id: ${{ steps.env-select.outputs.project_id }}
+      version_tag: ${{ steps.versioning.outputs.version_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      ###############################################################
+      # 1. Determine environment and target Cloud Run service
+      ###############################################################
+      - name: Select Environment
+        id: env-select
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "deploy_env=staging" >> $GITHUB_OUTPUT
+            echo "service_name=${{ env.STAGING_SERVICE }}" >> $GITHUB_OUTPUT
+            echo "project_id=${{ env.STAGING_PROJECT }}" >> $GITHUB_OUTPUT
+          else
+            if [ "${{ inputs.environment }}" = "production" ]; then
+              echo "deploy_env=production" >> $GITHUB_OUTPUT
+              echo "service_name=${{ env.PROD_SERVICE }}" >> $GITHUB_OUTPUT
+              echo "project_id=${{ env.PROD_PROJECT }}" >> $GITHUB_OUTPUT
+            else
+              echo "deploy_env=staging" >> $GITHUB_OUTPUT
+              echo "service_name=${{ env.STAGING_SERVICE }}" >> $GITHUB_OUTPUT
+              echo "project_id=${{ env.STAGING_PROJECT }}" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      ###############################################################
+      # 2. Production versioning (semantic versioning)
+      ###############################################################
+      - name: Semver versioning for production
+        id: versioning
+        if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+        run: |
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          VERSION=${LATEST#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+          echo "version_tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Prod Tag
+        if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+        run: |
+          git config --global user.name 'Verc CI Bot'
+          git config --global user.email 'ci@verc.ai'
+          git tag -a ${{ steps.versioning.outputs.version_tag }} -m "Release ${{ steps.versioning.outputs.version_tag }}"
+          git push origin ${{ steps.versioning.outputs.version_tag }}
+
+      ###############################################################
+      # 3. Auth & Docker Build + Push
+      ###############################################################
+      - uses: google-github-actions/auth@v2
+        id: auth
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+          token_format: access_token
+          project_id: ${{ steps.env-select.outputs.project_id }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker Image
+        id: build-image
+        run: |
+          IMAGE_PATH="${{ env.GCP_REGION }}-docker.pkg.dev/${{ steps.env-select.outputs.project_id }}/verc-app/${{ steps.env-select.outputs.service_name }}:${{ github.sha }}"
+          docker build . --platform linux/amd64 -t $IMAGE_PATH
+          docker push $IMAGE_PATH
+          echo "image_path=$IMAGE_PATH" >> $GITHUB_OUTPUT
+
+  ###################################################################
+  # 4. DEPLOY TO CLOUD RUN (staging or production)
+  ###################################################################
+  deploy:
+    needs: setup-build-publish
+    runs-on: ubuntu-latest
+
+    environment: ${{ needs.setup-build-publish.outputs.deploy_env }}
+
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "${{ needs.setup-build-publish.outputs.service_name }}" \
+            --image "${{ needs.setup-build-publish.outputs.image_path }}" \
+            --region "${{ env.GCP_REGION }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --service-account "391319920980-compute@developer.gserviceaccount.com" \
+            --memory 512Mi \
+            --cpu 1 \
+            --concurrency 80 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --timeout 300 \
+            --set-env-vars "ENVIRONMENT=${{ needs.setup-build-publish.outputs.deploy_env }}" \
+            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_ANON_KEY=supabase-anon-key:latest,OPENAI_API_KEY=openai-api-key:latest"
+
+      - name: Fetch URL
+        run: |
+          URL=$(gcloud run services describe \
+            ${{ needs.setup-build-publish.outputs.service_name }} \
+            --region ${{ env.GCP_REGION }} \
+            --format 'value(status.url)')
+          echo "Deployed to: $URL"
