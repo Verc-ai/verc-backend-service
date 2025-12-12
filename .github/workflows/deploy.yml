@@ -165,9 +165,16 @@ jobs:
           # Determine task queue name based on environment
           if [ "$ENV" = "production" ]; then
             TASK_QUEUE="transcription-queue-prod-v2"
+            # Get production project number for compute service account
+            PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
+            RUN_SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
           else
             TASK_QUEUE="transcription-queue-staging-v2"
+            # Staging uses project 391319920980
+            RUN_SERVICE_ACCOUNT="391319920980-compute@developer.gserviceaccount.com"
           fi
+
+          echo "Using Cloud Run service account: $RUN_SERVICE_ACCOUNT"
 
           gcloud run deploy "$SERVICE" \
             --image "${{ needs.setup-build-publish.outputs.image_path }}" \
@@ -175,7 +182,7 @@ jobs:
             --project "$PROJECT" \
             --platform managed \
             --allow-unauthenticated \
-            --service-account "391319920980-compute@developer.gserviceaccount.com" \
+            --service-account "$RUN_SERVICE_ACCOUNT" \
             --memory 512Mi \
             --cpu 1 \
             --min-instances 0 \
