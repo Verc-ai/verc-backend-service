@@ -99,6 +99,30 @@ class TwilioConfig(BaseModel):
     intelligence_service_sid: str = ""
 
 
+class BuffaloPBXConfig(BaseModel):
+    """Buffalo PBX configuration for call monitoring."""
+
+    # WebSocket connection
+    wss_url: str = Field(
+        default="wss://pbx.hovernetworks.net/spop",
+        description="Buffalo PBX WebSocket SPOP URL"
+    )
+    username: str = Field(default="", description="PBX login username")
+    password: str = Field(default="", description="PBX login password")
+
+    # SIP credentials for SPY calls
+    sip_host: str = Field(default="142.93.69.92", description="SIP server host")
+    sip_port: int = Field(default=5060, description="SIP server port")
+    sip_username: str = Field(default="", description="SIP auth username")
+    sip_password: str = Field(default="", description="SIP auth password")
+
+    # Monitoring settings
+    reconnect_delay: int = Field(default=5, description="Reconnect delay in seconds")
+    max_reconnect_delay: int = Field(default=60, description="Max reconnect delay")
+    ping_interval: int = Field(default=30, description="WebSocket ping interval")
+    ping_timeout: int = Field(default=10, description="WebSocket ping timeout")
+
+
 class CloudTasksConfig(BaseModel):
     """Google Cloud Tasks configuration."""
     enabled: bool = False
@@ -180,7 +204,18 @@ class AppSettings:
             transcription_provider=env('TWILIO_TRANSCRIPTION_PROVIDER', default='deepgram'),
             intelligence_service_sid=env('TWILIO_INTELLIGENCE_SERVICE_SID', default=''),
         )
-        
+
+        # Buffalo PBX
+        self.buffalo_pbx = BuffaloPBXConfig(
+            wss_url=env('BUFFALO_PBX_WSS_URL', default='wss://pbx.hovernetworks.net/spop'),
+            username=env('BUFFALO_PBX_USERNAME', default=''),
+            password=env('BUFFALO_PBX_PASSWORD', default=''),
+            sip_host=env('BUFFALO_SIP_HOST', default='142.93.69.92'),
+            sip_port=int(env('BUFFALO_SIP_PORT', default='5060')),
+            sip_username=env('BUFFALO_SIP_USERNAME', default=''),
+            sip_password=env('BUFFALO_SIP_PASSWORD', default=''),
+        )
+
         # Cloud Tasks
         self.cloud_tasks = CloudTasksConfig(
             enabled=env.bool('CLOUD_TASKS_ENABLED', default=False),
