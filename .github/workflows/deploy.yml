@@ -171,9 +171,9 @@ jobs:
           URL="${{ steps.deploy-backend.outputs.url }}"
           echo "Checking health at $URL/health"
           if curl -s -f "$URL/health" >/dev/null; then
-            echo "✅ Health check passed"
+            echo "Health check passed"
           else
-            echo "❌ Health check FAILED"
+            echo "Health check FAILED"
             exit 1
           fi
 
