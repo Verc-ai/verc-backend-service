@@ -24,8 +24,11 @@ permissions:
 
 env:
   GCP_REGION: us-east4
-  WORKLOAD_IDENTITY_PROVIDER: projects/391319920980/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-  SERVICE_ACCOUNT: github-ci@verc-staging.iam.gserviceaccount.com
+  WORKLOAD_IDENTITY_PROVIDER: projects/480289563704/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  
+  # Service Accounts (environment-specific)
+  STAGING_SERVICE_ACCOUNT: github-ci@verc-staging.iam.gserviceaccount.com
+  PROD_SERVICE_ACCOUNT: github-ci@verc-prod.iam.gserviceaccount.com
 
   # Cloud Run services
   STAGING_PROJECT: verc-staging
