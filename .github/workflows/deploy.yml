@@ -1,5 +1,5 @@
 name: Deploy
-run-name: Deploy to ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
+run-name: Deploy to ${{ github.event_name == 'push' && 'staging' || github.event.inputs.environment || 'staging' }}
 
 on:
   workflow_dispatch:
@@ -39,8 +39,8 @@ jobs:
 
     # Determine environment:
     # push → staging
-    # manual → inputs.environment
-    environment: ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
+    # manual → github.event.inputs.environment
+    environment: ${{ github.event_name == 'push' && 'staging' || github.event.inputs.environment || 'staging' }}
 
     outputs:
       image_path: ${{ steps.build-image.outputs.image_path }}
@@ -67,7 +67,8 @@ jobs:
             echo "project_id=${{ env.STAGING_PROJECT }}" >> $GITHUB_OUTPUT
             echo "repository=${{ env.STAGING_REPO }}" >> $GITHUB_OUTPUT
           else
-            if [ "${{ inputs.environment }}" = "production" ]; then
+            ENV_INPUT="${{ github.event.inputs.environment }}"
+            if [ "$ENV_INPUT" = "production" ]; then
               echo "deploy_env=production" >> $GITHUB_OUTPUT
               echo "service_name=${{ env.PROD_SERVICE }}" >> $GITHUB_OUTPUT
               echo "project_id=${{ env.PROD_PROJECT }}" >> $GITHUB_OUTPUT
@@ -130,6 +131,10 @@ jobs:
         run: |
           SERVICE="${{ needs.setup-build-publish.outputs.service_name }}"
           PROJECT="${{ needs.setup-build-publish.outputs.project_id }}"
+          ENV="${{ needs.setup-build-publish.outputs.deploy_env }}"
+
+          # Set gcloud project
+          gcloud config set project "$PROJECT"
 
           # Previous URL (if exists)
           SERVICE_URL=$(gcloud run services describe "$SERVICE" \
@@ -137,11 +142,19 @@ jobs:
             --project "$PROJECT" \
             --format 'value(status.url)' 2>/dev/null || echo "")
 
-          echo "Deploying to service: $SERVICE in project: $PROJECT"
+          echo "Deploying to service: $SERVICE in project: $PROJECT (environment: $ENV)"
+
+          # Determine task queue name based on environment
+          if [ "$ENV" = "production" ]; then
+            TASK_QUEUE="transcription-queue-prod-v2"
+          else
+            TASK_QUEUE="transcription-queue-staging-v2"
+          fi
 
           gcloud run deploy "$SERVICE" \
             --image "${{ needs.setup-build-publish.outputs.image_path }}" \
             --region "${{ env.GCP_REGION }}" \
+            --project "$PROJECT" \
             --platform managed \
             --allow-unauthenticated \
             --service-account "391319920980-compute@developer.gserviceaccount.com" \
@@ -151,14 +164,23 @@ jobs:
             --max-instances 5 \
             --concurrency 80 \
             --timeout 300 \
-            --set-env-vars "NODE_ENV=production,ENVIRONMENT=${{ needs.setup-build-publish.outputs.deploy_env }},GCP_PROJECT_ID=$PROJECT,GCP_REGION=${{ env.GCP_REGION }},CLOUD_RUN_SERVICE_URL=$SERVICE_URL" \
+            --set-env-vars "NODE_ENV=production,ENVIRONMENT=$ENV,GCP_PROJECT_ID=$PROJECT,GCP_REGION=${{ env.GCP_REGION }},GCP_TASK_QUEUE_NAME=$TASK_QUEUE,CLOUD_TASKS_ENABLED=true,CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL=cloud-tasks-invoker@$PROJECT.iam.gserviceaccount.com,ASSEMBLYAI_PII_REDACTION_ENABLED=true,ASSEMBLYAI_PII_SUBSTITUTION=entity_name,ASSEMBLYAI_GENERATE_REDACTED_AUDIO=true,DJANGO_ENV=production,CLOUD_RUN_SERVICE_URL=$SERVICE_URL" \
             --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_ANON_KEY=supabase-anon-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,OPENAI_API_KEY=openai-api-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,ASSEMBLYAI_API_KEY=assemblyai-api-key:latest,TWILIO_ACCOUNT_SID=twilio-account-sid:latest,TWILIO_AUTH_TOKEN=twilio-auth-token:latest,TWILIO_PHONE_NUMBER=twilio-phone-number:latest,TWILIO_WEBHOOK_BASE_URL=TWILIO_WEBHOOK_BASE_URL:latest"
+
+          # Wait a bit for deployment to complete
+          echo "Waiting for deployment to stabilize..."
+          sleep 5
 
           # Get updated URL
           URL=$(gcloud run services describe "$SERVICE" \
             --region ${{ env.GCP_REGION }} \
             --project "$PROJECT" \
             --format 'value(status.url)')
+
+          if [ -z "$URL" ]; then
+            echo "❌ Failed to get service URL"
+            exit 1
+          fi
 
           echo "Backend deployed to: $URL"
           echo "url=$URL" >> $GITHUB_OUTPUT
@@ -169,11 +191,50 @@ jobs:
       - name: Health Check
         run: |
           URL="${{ steps.deploy-backend.outputs.url }}"
-          echo "Checking health at $URL/health"
-          if curl -s -f "$URL/health" >/dev/null; then
-            echo "Health check passed"
-          else
-            echo "Health check FAILED"
+          HEALTH_URL="${URL}/health"
+          
+          echo "Waiting 10 seconds for service to be ready..."
+          sleep 10
+          
+          echo "Checking health at $HEALTH_URL"
+          
+          # Retry logic: try up to 5 times with exponential backoff
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          SUCCESS=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
+            
+            # Try the health check
+            HTTP_CODE=$(curl -s -o /tmp/health_response.txt -w "%{http_code}" "$HEALTH_URL" || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Health check passed (HTTP $HTTP_CODE)"
+              cat /tmp/health_response.txt
+              SUCCESS=true
+              break
+            else
+              echo "⚠️  Health check returned HTTP $HTTP_CODE"
+              if [ -f /tmp/health_response.txt ]; then
+                echo "Response:"
+                cat /tmp/health_response.txt
+              fi
+              
+              if [ $RETRY_COUNT -lt $((MAX_RETRIES - 1)) ]; then
+                WAIT_TIME=$((2 ** RETRY_COUNT))
+                echo "Waiting ${WAIT_TIME} seconds before retry..."
+                sleep $WAIT_TIME
+              fi
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+          done
+          
+          if [ "$SUCCESS" = "false" ]; then
+            echo "❌ Health check FAILED after $MAX_RETRIES attempts"
+            echo "Service URL: $URL"
+            echo "Health URL: $HEALTH_URL"
             exit 1
           fi
 
