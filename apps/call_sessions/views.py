@@ -33,7 +33,7 @@ def calculate_session_duration(created_at: str, last_event_at: str) -> int:
         created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         return int((last_event - created).total_seconds())
     except Exception as e:
-        logger.warning(f"Failed to calculate the duration: {e}")
+        logger.warning(f"Failed to calculate duration: {e}")
         return None
 
 
