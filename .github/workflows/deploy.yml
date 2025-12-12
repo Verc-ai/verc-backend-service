@@ -24,7 +24,10 @@ permissions:
 
 env:
   GCP_REGION: us-east4
-  WORKLOAD_IDENTITY_PROVIDER: projects/391319920980/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  
+  # Workload Identity Providers (environment-specific)
+  STAGING_WORKLOAD_IDENTITY_PROVIDER: projects/391319920980/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  PROD_WORKLOAD_IDENTITY_PROVIDER: projects/480289563704/locations/global/workloadIdentityPools/github-pool/providers/github-provider
   
   # Service Accounts (environment-specific)
   STAGING_SERVICE_ACCOUNT: github-ci@verc-staging.iam.gserviceaccount.com
@@ -56,6 +59,7 @@ jobs:
       project_id: ${{ steps.env-select.outputs.project_id }}
       repository: ${{ steps.env-select.outputs.repository }}
       service_account: ${{ steps.env-select.outputs.service_account }}
+      workload_identity_provider: ${{ steps.env-select.outputs.workload_identity_provider }}
 
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +79,7 @@ jobs:
             echo "project_id=${{ env.STAGING_PROJECT }}" >> $GITHUB_OUTPUT
             echo "repository=${{ env.STAGING_REPO }}" >> $GITHUB_OUTPUT
             echo "service_account=${{ env.STAGING_SERVICE_ACCOUNT }}" >> $GITHUB_OUTPUT
+            echo "workload_identity_provider=${{ env.STAGING_WORKLOAD_IDENTITY_PROVIDER }}" >> $GITHUB_OUTPUT
           else
             ENV_INPUT="${{ github.event.inputs.environment }}"
             if [ "$ENV_INPUT" = "production" ]; then
@@ -83,12 +88,14 @@ jobs:
               echo "project_id=${{ env.PROD_PROJECT }}" >> $GITHUB_OUTPUT
               echo "repository=${{ env.PROD_REPO }}" >> $GITHUB_OUTPUT
               echo "service_account=${{ env.PROD_SERVICE_ACCOUNT }}" >> $GITHUB_OUTPUT
+              echo "workload_identity_provider=${{ env.PROD_WORKLOAD_IDENTITY_PROVIDER }}" >> $GITHUB_OUTPUT
             else
               echo "deploy_env=staging" >> $GITHUB_OUTPUT
               echo "service_name=${{ env.STAGING_SERVICE }}" >> $GITHUB_OUTPUT
               echo "project_id=${{ env.STAGING_PROJECT }}" >> $GITHUB_OUTPUT
               echo "repository=${{ env.STAGING_REPO }}" >> $GITHUB_OUTPUT
               echo "service_account=${{ env.STAGING_SERVICE_ACCOUNT }}" >> $GITHUB_OUTPUT
+              echo "workload_identity_provider=${{ env.STAGING_WORKLOAD_IDENTITY_PROVIDER }}" >> $GITHUB_OUTPUT
             fi
           fi
 
@@ -98,7 +105,7 @@ jobs:
       - uses: google-github-actions/auth@v2
         id: auth
         with:
-          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          workload_identity_provider: ${{ steps.env-select.outputs.workload_identity_provider }}
           service_account: ${{ steps.env-select.outputs.service_account }}
 
       - uses: google-github-actions/setup-gcloud@v2
@@ -132,7 +139,7 @@ jobs:
     steps:
       - uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          workload_identity_provider: ${{ needs.setup-build-publish.outputs.workload_identity_provider }}
           service_account: ${{ needs.setup-build-publish.outputs.service_account }}
 
       - uses: google-github-actions/setup-gcloud@v2
