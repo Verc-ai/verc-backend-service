@@ -418,24 +418,34 @@ class TranscribeAudioView(APIView):
             print(f'[TASK] ✅ Updated session {session_id} status to transcribed with metadata summary', file=sys.stderr, flush=True)
             logger.info(f'Updated session {session_id} status to transcribed with {len(turns)} turns')
             
-            # Step 7: Queue AI analysis task
-            service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
-            if not service_url:
-                k_service = os.getenv('K_SERVICE')
-                if k_service:
-                    service_url = f'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+            # Step 7: Queue AI analysis task (Cloud Tasks or local processing)
+            cloud_tasks_config = settings.APP_SETTINGS.cloud_tasks
+
+            if cloud_tasks_config.enabled:
+                # Production/Staging: Use Cloud Tasks
+                service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+                if not service_url:
+                    k_service = os.getenv('K_SERVICE')
+                    if k_service:
+                        service_url = f'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+                    else:
+                        service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+
+                logger.info(f'Using service URL for AI analysis task: {service_url}')
+
+                ai_task_queued = enqueue_ai_analysis_task(session_id, service_url)
+                if ai_task_queued:
+                    logger.info(f'✅ AI analysis task queued for session {session_id}')
+                    print(f'[TASK] ✅ AI analysis task queued', file=sys.stderr, flush=True)
                 else:
-                    service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
-            
-            logger.info(f'Using service URL for AI analysis task: {service_url}')
-            
-            ai_task_queued = enqueue_ai_analysis_task(session_id, service_url)
-            if ai_task_queued:
-                logger.info(f'✅ AI analysis task queued for session {session_id}')
-                print(f'[TASK] ✅ AI analysis task queued', file=sys.stderr, flush=True)
+                    logger.warning(f'Failed to queue AI analysis task for session {session_id}')
+                    print(f'[TASK] ⚠️ Failed to queue AI analysis task', file=sys.stderr, flush=True)
             else:
-                logger.warning(f'Failed to queue AI analysis task for session {session_id}')
-                print(f'[TASK] ⚠️ Failed to queue AI analysis task', file=sys.stderr, flush=True)
+                # Local development: Use background processing
+                from apps.core.services.background_tasks import process_ai_analysis_locally
+                logger.info(f'🔵 Triggering local AI analysis for session {session_id}')
+                print(f'[TASK] 🔵 Triggering local AI analysis (Cloud Tasks disabled)', file=sys.stderr, flush=True)
+                process_ai_analysis_locally(session_id)
             
             # Return success
             return Response({
