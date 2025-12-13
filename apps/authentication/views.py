@@ -131,7 +131,7 @@ class LoginView(APIView):
             'user': {
                 'id': str(uuid.uuid4()),
                 'email': email,
-                'displayName': email.split('@')[0],
+                'displayName': f'{email.split("@")[0]} 🚀 Staging',
                 'avatarUrl': None,
                 'orgId': mock_org_id,
                 'orgName': mock_org_name,
