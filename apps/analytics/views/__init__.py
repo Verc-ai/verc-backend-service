@@ -1,0 +1,4 @@
+"""
+Analytics views package.
+"""
+
