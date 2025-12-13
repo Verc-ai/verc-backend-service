@@ -49,23 +49,7 @@ class LoginView(APIView):
         
         if supabase_auth:
             try:
-                # Authenticate with Supabase
-                auth_response = supabase_auth.auth.sign_in_with_password({
-                    'email': email,
-                    'password': password
-                })
-                
-                if auth_response.user and auth_response.session:
-                    user = auth_response.user
-                    session = auth_response.session
-                    
-                    # Extract user metadata
-                    user_metadata = user.user_metadata or {}
-                    org_id = user_metadata.get('org_id')
-                    org_name = user_metadata.get('org_name')
-                    role = user_metadata.get('org_role', 'user')
-                    display_name = user_metadata.get('full_name') or user_metadata.get('display_name') or email.split('@')[0]
-                    avatar_url = user_metadata.get('avatar_url')
+  
                     
                     # If org info not in metadata, try to fetch from profiles table
                     if not org_id and supabase_admin:
