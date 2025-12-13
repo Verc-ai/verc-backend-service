@@ -20,32 +20,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class LoginView(APIView):
-    """
-    POST /auth/login
-    Authenticate user with email/password via Supabase.
-    Frontend expects: { user: {...}, session: { accessToken, ... } }
-    """
-    permission_classes = [AllowAny]  # Public endpoint - no auth required
-    parser_classes = [JSONParser]
-    
-    def options(self, request):
-        """Handle CORS preflight requests."""
-        return Response(status=status.HTTP_200_OK)
-    
-    def post(self, request):
-        email = request.data.get('email', '').strip()
-
-                }
-            },
-            'session': {
-                'accessToken': 'mock-access-token',
-                'refreshToken': 'mock-refresh-token',
-                'expiresIn': expires_in,
-                'expiresAt': expires_at,
-            }
-        }, status=status.HTTP_200_OK)
-
 
 class SignupView(APIView):
     """
