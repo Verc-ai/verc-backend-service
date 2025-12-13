@@ -15,6 +15,7 @@ from django.views.decorators.csrf import csrf_exempt
 from apps.authentication import views as auth_views
 
 
+# Production now uses same Supabase database as staging
 def _health_check_response(request):
     """
     Generate standardized health check response.
