@@ -180,9 +180,21 @@ async def process_buffalo_event(event: dict):
             f"Agent={agent_ext}, Direction={call_details['direction']}"
         )
 
-        # TODO Phase 2: Trigger SPY call here
-        # For now, just log that we would spy on this call
-        logger.info(f"[PBX-ANSWERED] Would initiate SPY call to {agent_ext} (Phase 2)")
+        # Initiate SPY call via Twilio
+        from apps.twilio.services import initiate_spy_call
+
+        result = initiate_spy_call(agent_ext, call_details)
+
+        if result['success']:
+            logger.info(
+                f"[PBX-ANSWERED] SPY call initiated successfully - "
+                f"CallSid={result['call_sid']}, SessionId={result['session_id']}"
+            )
+        else:
+            logger.error(
+                f"[PBX-ANSWERED] Failed to initiate SPY call - "
+                f"Extension={agent_ext}, Error={result['error']}"
+            )
 
         # Remove from pending (answered calls are now active)
         del pending_calls[call_id]
