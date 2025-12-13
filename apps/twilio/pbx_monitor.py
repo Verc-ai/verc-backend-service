@@ -207,7 +207,79 @@ async def process_buffalo_event(event: dict):
         else:
             logger.debug(f"[PBX-TERMINATED] CallId={call_id} ended")
 
-        # TODO Phase 3: Cleanup SPY call if exists
+        # Cleanup SPY call if it exists
+        await cleanup_spy_call(call_id)
+
+
+async def cleanup_spy_call(buffalo_call_id: str):
+    """
+    Terminate SPY call when Buffalo PBX call ends.
+
+    Args:
+        buffalo_call_id: Buffalo PBX call ID (used to find session)
+    """
+    try:
+        from apps.core.services.supabase import get_supabase_client
+        from django.conf import settings
+
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.warning(f"[PBX-CLEANUP] Supabase not available for cleanup")
+            return
+
+        config = settings.APP_SETTINGS.supabase
+        sessions_table = config.sessions_table
+
+        # Find session by buffalo_call_id
+        result = supabase.table(sessions_table).select('id, call_sid, status').eq('buffalo_call_id', buffalo_call_id).execute()
+
+        if not result.data or len(result.data) == 0:
+            logger.debug(f"[PBX-CLEANUP] No SPY call found for BuffaloCallId={buffalo_call_id}")
+            return
+
+        session_data = result.data[0]
+        session_id = session_data['id']
+        call_sid = session_data.get('call_sid')
+        status = session_data.get('status')
+
+        if not call_sid:
+            logger.debug(f"[PBX-CLEANUP] Session {session_id} has no call_sid")
+            return
+
+        # Only cleanup if call is still active
+        if status not in ['initiated', 'calling', 'in_progress']:
+            logger.debug(
+                f"[PBX-CLEANUP] Session {session_id} already in terminal status: {status}"
+            )
+            return
+
+        logger.info(
+            f"[PBX-CLEANUP] Terminating SPY call - "
+            f"SessionId={session_id}, CallSid={call_sid}, BuffaloCallId={buffalo_call_id}"
+        )
+
+        # Hangup the SPY call
+        from apps.twilio.services import hangup_call
+
+        result = hangup_call(call_sid, reason="Buffalo PBX call terminated")
+
+        if result['success']:
+            logger.info(
+                f"[PBX-CLEANUP] ✅ SPY call terminated - "
+                f"SessionId={session_id}, CallSid={call_sid}"
+            )
+        else:
+            logger.warning(
+                f"[PBX-CLEANUP] Failed to terminate SPY call - "
+                f"SessionId={session_id}, Error={result['error']}"
+            )
+
+    except Exception as e:
+        logger.error(
+            f"[PBX-CLEANUP] Error cleaning up SPY call - "
+            f"BuffaloCallId={buffalo_call_id}, Error={str(e)}",
+            exc_info=True
+        )
 
 
 def run_pbx_monitor():

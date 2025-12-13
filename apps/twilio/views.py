@@ -75,14 +75,160 @@ class VoiceWebhookView(View):
         )
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class CallStatusView(APIView):
     """
     POST /api/twilio/call-status
-    Handle call status updates.
+    Handle call status updates from Twilio.
+
+    Twilio sends POST with:
+    - CallSid: Unique call identifier
+    - CallStatus: initiated, ringing, in-progress, completed, failed, busy, no-answer, canceled
+    - CallDuration: Call length in seconds (when completed)
+    - Timestamp: Event timestamp
+    - From: Caller (Twilio number)
+    - To: Destination (SIP URI for SPY calls)
+
+    Status progression for SPY calls:
+    1. initiated - Call created by Phase 2
+    2. ringing - Calling Buffalo PBX extension
+    3. in-progress/answered - SPY call active, recording
+    4. completed - Call ended normally
+    5. failed/busy/no-answer - Call failed
+
+    This webhook:
+    1. Finds session by call_sid
+    2. Updates session status based on call status
+    3. Records call duration when completed
+    4. Logs all status changes for monitoring
     """
+
     def post(self, request):
-        # TODO: Implement call status webhook
-        return Response({'message': 'Call status webhook - to be implemented'}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        # Extract Twilio webhook parameters
+        call_sid = request.POST.get('CallSid')
+        call_status = request.POST.get('CallStatus')
+        call_duration = request.POST.get('CallDuration')
+        timestamp = request.POST.get('Timestamp')
+        from_number = request.POST.get('From')
+        to_number = request.POST.get('To')
+
+        logger.info(
+            f"[CALL-STATUS] Received webhook - "
+            f"CallSid={call_sid}, Status={call_status}, Duration={call_duration}s"
+        )
+
+        # Validate required fields
+        if not call_sid or not call_status:
+            logger.error(
+                f"[CALL-STATUS] Missing required fields - "
+                f"CallSid={call_sid}, Status={call_status}"
+            )
+            return Response(
+                {'error': 'Missing CallSid or CallStatus'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find session by call_sid
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.error("[CALL-STATUS] Supabase client not available")
+            return Response(
+                {'error': 'Database not available'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        try:
+            config = settings.APP_SETTINGS.supabase
+            sessions_table = config.sessions_table
+
+            # Find session by call_sid
+            session_result = supabase.table(sessions_table).select('id, status').eq('call_sid', call_sid).execute()
+
+            if not session_result.data or len(session_result.data) == 0:
+                # Not an error - might be a different type of call
+                logger.info(
+                    f"[CALL-STATUS] Session not found for CallSid={call_sid} - "
+                    f"possibly not a SPY call"
+                )
+                return Response(
+                    {'message': 'Session not found - possibly not a SPY call'},
+                    status=status.HTTP_200_OK
+                )
+
+            session_id = session_result.data[0]['id']
+            current_status = session_result.data[0].get('status')
+
+            logger.info(
+                f"[CALL-STATUS] Found session {session_id} - "
+                f"CallSid={call_sid}, CurrentStatus={current_status}, NewCallStatus={call_status}"
+            )
+
+            # Map Twilio call status to session status
+            from datetime import datetime
+
+            update_data = {
+                'last_event_received_at': datetime.utcnow().isoformat()
+            }
+
+            # Map Twilio status to session status and add relevant fields
+            if call_status == 'initiated':
+                # Call created - already set by Phase 2
+                pass
+
+            elif call_status == 'ringing':
+                # Calling extension
+                update_data['status'] = 'calling'
+                update_data['call_ringing_at'] = datetime.utcnow().isoformat()
+
+            elif call_status in ['in-progress', 'answered']:
+                # SPY call active
+                update_data['status'] = 'in_progress'
+                update_data['call_answered_at'] = datetime.utcnow().isoformat()
+
+            elif call_status == 'completed':
+                # Call ended normally
+                # Don't change status if already recorded/transcribing/transcribed
+                if current_status not in ['recorded', 'transcribing', 'transcribed', 'completed']:
+                    update_data['status'] = 'completed'
+
+                update_data['call_completed_at'] = datetime.utcnow().isoformat()
+
+                # Update duration if provided
+                if call_duration:
+                    update_data['duration'] = int(call_duration)
+
+            elif call_status in ['failed', 'busy', 'no-answer', 'canceled']:
+                # Call failed
+                update_data['status'] = 'failed'
+                update_data['call_failed_at'] = datetime.utcnow().isoformat()
+                update_data['call_failure_reason'] = call_status
+
+            # Update session
+            supabase.table(sessions_table).update(update_data).eq('id', session_id).execute()
+
+            logger.info(
+                f"[CALL-STATUS] Updated session {session_id} - "
+                f"CallStatus={call_status}, UpdatedFields={list(update_data.keys())}"
+            )
+
+            # Return success
+            return Response({
+                'success': True,
+                'message': 'Call status processed',
+                'sessionId': session_id,
+                'callStatus': call_status
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(
+                f"[CALL-STATUS] Error processing status - "
+                f"CallSid={call_sid}, Error={str(e)}",
+                exc_info=True
+            )
+            return Response(
+                {'error': f'Failed to process call status: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -329,11 +475,128 @@ class MakeCallView(APIView):
 class HangupView(APIView):
     """
     POST /api/twilio/hangup/<call_sid>
-    Hangup active call.
+    Terminate an active SPY call.
+
+    URL Parameters:
+    - call_sid: Twilio CallSid to terminate
+
+    Request Body (optional):
+    - reason: Reason for hangup (for logging)
+
+    This endpoint:
+    1. Validates call_sid belongs to a session
+    2. Terminates the call via Twilio API
+    3. Updates session status
+    4. Returns success/failure
+
+    Use cases:
+    - Manual intervention to stop recording
+    - Cleanup when Buffalo call ends (via PBX monitor)
+    - Emergency stop for testing
     """
+
     def post(self, request, call_sid):
-        # TODO: Implement hangup
-        return Response({'message': 'Hangup - to be implemented'}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        reason = request.data.get('reason', 'Manual hangup request')
+
+        logger.info(
+            f"[HANGUP] Hangup requested - CallSid={call_sid}, Reason={reason}"
+        )
+
+        # Validate call_sid
+        if not call_sid:
+            return Response(
+                {'error': 'Missing call_sid'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find session by call_sid
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.error("[HANGUP] Supabase client not available")
+            return Response(
+                {'error': 'Database not available'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        try:
+            config = settings.APP_SETTINGS.supabase
+            sessions_table = config.sessions_table
+
+            # Find session
+            session_result = supabase.table(sessions_table).select('id, status').eq('call_sid', call_sid).execute()
+
+            if not session_result.data or len(session_result.data) == 0:
+                logger.error(f"[HANGUP] Session not found - CallSid={call_sid}")
+                return Response(
+                    {'error': f'Session not found for CallSid: {call_sid}'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            session_id = session_result.data[0]['id']
+            current_status = session_result.data[0].get('status')
+
+            logger.info(
+                f"[HANGUP] Found session {session_id} - "
+                f"CallSid={call_sid}, CurrentStatus={current_status}"
+            )
+
+            # Terminate call via Twilio
+            from apps.twilio.services import hangup_call
+
+            hangup_result = hangup_call(call_sid, reason)
+
+            if not hangup_result['success']:
+                logger.error(
+                    f"[HANGUP] Failed to hangup call - "
+                    f"CallSid={call_sid}, Error={hangup_result['error']}"
+                )
+                return Response(
+                    {'error': f"Failed to hangup call: {hangup_result['error']}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            logger.info(
+                f"[HANGUP] ✅ Call terminated - "
+                f"CallSid={call_sid}, SessionId={session_id}"
+            )
+
+            # Update session status
+            from datetime import datetime
+
+            update_data = {
+                'call_hangup_reason': reason,
+                'call_hung_up_at': datetime.utcnow().isoformat(),
+                'last_event_received_at': datetime.utcnow().isoformat()
+            }
+
+            # Only update status if call is still active
+            if current_status in ['initiated', 'calling', 'in_progress']:
+                update_data['status'] = 'terminated'
+
+            supabase.table(sessions_table).update(update_data).eq('id', session_id).execute()
+
+            logger.info(
+                f"[HANGUP] Updated session {session_id} status"
+            )
+
+            # Return success
+            return Response({
+                'success': True,
+                'message': 'Call terminated successfully',
+                'sessionId': session_id,
+                'callSid': call_sid
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(
+                f"[HANGUP] Error terminating call - "
+                f"CallSid={call_sid}, Error={str(e)}",
+                exc_info=True
+            )
+            return Response(
+                {'error': f'Failed to terminate call: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class StatusView(APIView):

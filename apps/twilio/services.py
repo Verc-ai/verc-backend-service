@@ -300,3 +300,74 @@ def upload_recording_to_storage(
             'success': False,
             'error': f"Upload failed: {str(e)}"
         }
+
+
+def hangup_call(call_sid: str, reason: str = "Hangup requested") -> dict:
+    """
+    Terminate an active Twilio call.
+
+    Args:
+        call_sid: Twilio call SID to terminate
+        reason: Reason for hangup (for logging)
+
+    Returns:
+        Dict with:
+            - success: bool
+            - message: Status message (if successful)
+            - error: Error message (if failed)
+    """
+
+    try:
+        # Initialize Twilio client
+        client = Client(
+            settings.APP_SETTINGS.twilio.account_sid,
+            settings.APP_SETTINGS.twilio.auth_token
+        )
+
+        logger.info(
+            f"[HANGUP-SERVICE] Terminating call - CallSid={call_sid}, Reason={reason}"
+        )
+
+        # Update call status to 'completed' to terminate it
+        # Twilio API: calls(call_sid).update(status='completed')
+        call = client.calls(call_sid).update(status='completed')
+
+        logger.info(
+            f"[HANGUP-SERVICE] ✅ Call terminated - "
+            f"CallSid={call_sid}, FinalStatus={call.status}"
+        )
+
+        return {
+            'success': True,
+            'message': f'Call terminated: {call.status}'
+        }
+
+    except TwilioRestException as e:
+        logger.error(
+            f"[HANGUP-SERVICE] Twilio API error - "
+            f"CallSid={call_sid}, Error={e.msg}, Code={e.code}"
+        )
+
+        # Handle specific error codes
+        if e.code == 20404:
+            # Call not found - may have already ended
+            return {
+                'success': True,  # Not really an error
+                'message': 'Call already ended or not found'
+            }
+
+        return {
+            'success': False,
+            'error': f"Twilio error: {e.msg}"
+        }
+
+    except Exception as e:
+        logger.error(
+            f"[HANGUP-SERVICE] Unexpected error - "
+            f"CallSid={call_sid}, Error={str(e)}",
+            exc_info=True
+        )
+        return {
+            'success': False,
+            'error': f"Hangup failed: {str(e)}"
+        }
