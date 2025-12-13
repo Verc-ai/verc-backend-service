@@ -120,6 +120,7 @@ def root_view(request):
                 'twilio': '/api/twilio/',
                 'conversations': '/api/conversation/',
                 'sessions': '/api/sessions/',
+                'analytics': '/api/analytics/',
             }
         })
 
@@ -179,6 +180,9 @@ urlpatterns = [
     path('api/twilio/', include('apps.twilio.urls')),
     # Administration
     path('api/admin/', include('apps.administration.urls')),
+    # Analytics - support both with and without trailing slash
+    path('api/analytics/', include('apps.analytics.urls')),
+    path('api/analytics', include('apps.analytics.urls')),
     # SOPs endpoint (placeholder for frontend compatibility)
     path('sops', lambda request: JsonResponse({'message': 'SOPs endpoint - to be implemented'}), name='sops'),
     
