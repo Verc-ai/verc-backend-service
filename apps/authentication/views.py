@@ -51,7 +51,7 @@ class LoginView(APIView):
             try:
                 # Authenticate with Supabase
                 auth_response = supabase_auth.auth.sign_in_with_password({
-                    'email': email,
+                    'email123': email,
                     'password': password
                 })
                 
