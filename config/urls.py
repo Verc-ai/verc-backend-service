@@ -29,7 +29,6 @@ def _health_check_response(request):
         'status': 'healthy',
         'service': 'verc-backend',
         'version': '1.0.0',
-        'test_message': '🧪 TEST: This is a test deployment - workflow verification',
         'request_path': request.path,
         'request_method': request.method,
         'request_meta': {
