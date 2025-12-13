@@ -6,6 +6,7 @@ from twilio.base.exceptions import TwilioRestException
 from django.conf import settings
 from apps.core.services.supabase import get_supabase_client
 import logging
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -138,4 +139,164 @@ def initiate_spy_call(extension: str, call_details: dict) -> dict:
         return {
             'success': False,
             'error': f"Unexpected error: {str(e)}"
+        }
+
+
+def download_twilio_recording(recording_sid: str, recording_url: str) -> dict:
+    """
+    Download recording audio from Twilio.
+
+    Args:
+        recording_sid: Twilio recording SID
+        recording_url: Twilio recording URL (from webhook)
+
+    Returns:
+        Dict with:
+            - success: bool
+            - audio_bytes: Recording audio data (if successful)
+            - content_type: Audio MIME type (if successful)
+            - error: Error message (if failed)
+    """
+
+    try:
+        # Initialize Twilio client
+        client = Client(
+            settings.APP_SETTINGS.twilio.account_sid,
+            settings.APP_SETTINGS.twilio.auth_token
+        )
+
+        logger.info(
+            f"[RECORDING-DOWNLOAD] Downloading recording - RecordingSid={recording_sid}"
+        )
+
+        # Fetch recording metadata
+        recording = client.recordings(recording_sid).fetch()
+
+        # Build download URL with .wav format for best quality
+        # Twilio format: https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Recordings/{RecordingSid}.wav
+        download_url = f"https://api.twilio.com{recording.uri.replace('.json', '.wav')}"
+
+        logger.info(
+            f"[RECORDING-DOWNLOAD] Fetching audio from Twilio - URL={download_url[:80]}..."
+        )
+
+        # Download audio using Twilio credentials for HTTP basic auth
+        auth = (settings.APP_SETTINGS.twilio.account_sid, settings.APP_SETTINGS.twilio.auth_token)
+
+        response = httpx.get(download_url, auth=auth, timeout=120.0)
+        response.raise_for_status()
+
+        audio_bytes = response.content
+        content_type = response.headers.get('Content-Type', 'audio/wav')
+
+        logger.info(
+            f"[RECORDING-DOWNLOAD] ✅ Downloaded recording - "
+            f"RecordingSid={recording_sid}, Size={len(audio_bytes)} bytes, "
+            f"ContentType={content_type}"
+        )
+
+        return {
+            'success': True,
+            'audio_bytes': audio_bytes,
+            'content_type': content_type
+        }
+
+    except TwilioRestException as e:
+        logger.error(
+            f"[RECORDING-DOWNLOAD] Twilio API error - "
+            f"RecordingSid={recording_sid}, Error={e.msg}, Code={e.code}"
+        )
+        return {
+            'success': False,
+            'error': f"Twilio error: {e.msg}"
+        }
+
+    except Exception as e:
+        logger.error(
+            f"[RECORDING-DOWNLOAD] Unexpected error - "
+            f"RecordingSid={recording_sid}, Error={str(e)}",
+            exc_info=True
+        )
+        return {
+            'success': False,
+            'error': f"Download failed: {str(e)}"
+        }
+
+
+def upload_recording_to_storage(
+    session_id: int,
+    recording_sid: str,
+    audio_bytes: bytes,
+    content_type: str
+) -> dict:
+    """
+    Upload recording audio to Supabase Storage.
+
+    Args:
+        session_id: Transcription session ID
+        recording_sid: Twilio recording SID
+        audio_bytes: Audio file bytes
+        content_type: Audio MIME type (e.g., 'audio/wav')
+
+    Returns:
+        Dict with:
+            - success: bool
+            - storage_path: Path in Supabase Storage (if successful)
+            - error: Error message (if failed)
+    """
+
+    try:
+        supabase = get_supabase_client()
+        if not supabase:
+            return {
+                'success': False,
+                'error': 'Supabase client not available'
+            }
+
+        config = settings.APP_SETTINGS.supabase
+        bucket = config.audio_bucket
+
+        # Generate storage path: twilio-recordings/{session_id}/{recording_sid}.wav
+        # This matches the pattern used in existing transcription pipeline
+        storage_path = f"twilio-recordings/{session_id}/{recording_sid}.wav"
+
+        logger.info(
+            f"[RECORDING-UPLOAD] Uploading to Supabase Storage - "
+            f"Bucket={bucket}, Path={storage_path}, Size={len(audio_bytes)} bytes"
+        )
+
+        # Upload to Supabase Storage
+        # Supabase Python SDK: storage.from_(bucket).upload(path, file)
+        result = supabase.storage.from_(bucket).upload(
+            path=storage_path,
+            file=audio_bytes,
+            file_options={
+                'content-type': content_type,
+                'upsert': 'true'  # Allow overwrite if exists
+            }
+        )
+
+        # Check for errors
+        if hasattr(result, 'error') and result.error:
+            raise Exception(f"Storage upload failed: {result.error}")
+
+        logger.info(
+            f"[RECORDING-UPLOAD] ✅ Uploaded to storage - "
+            f"SessionId={session_id}, Path={storage_path}"
+        )
+
+        return {
+            'success': True,
+            'storage_path': storage_path
+        }
+
+    except Exception as e:
+        logger.error(
+            f"[RECORDING-UPLOAD] Upload failed - "
+            f"SessionId={session_id}, RecordingSid={recording_sid}, Error={str(e)}",
+            exc_info=True
+        )
+        return {
+            'success': False,
+            'error': f"Upload failed: {str(e)}"
         }
