@@ -7,6 +7,8 @@ import asyncio
 import websockets
 import json
 import logging
+import signal
+import time
 from django.conf import settings
 from typing import Dict, Optional
 
@@ -333,20 +335,80 @@ async def cleanup_spy_call(buffalo_call_id: str):
         )
 
 
+def handle_shutdown(signum, frame):
+    """
+    Handle SIGTERM and SIGINT signals for graceful shutdown.
+
+    Args:
+        signum: Signal number
+        frame: Current stack frame
+    """
+    logger.info(f"[PBX-MONITOR] Received signal {signum}, initiating shutdown...")
+    raise KeyboardInterrupt
+
+
 def run_pbx_monitor():
     """
-    Entry point for running PBX monitor.
+    Entry point for running PBX monitor with feature flag control.
 
-    This function starts the async event loop and connects to Buffalo PBX.
+    This function runs an outer control loop that checks the 'pbx-monitor'
+    feature flag every 30 seconds. When enabled, it starts the PBX monitor.
+    When disabled, it waits and checks again.
+
+    The monitor automatically handles:
+    - Feature flag toggling (checks every 30s)
+    - Graceful shutdown via SIGTERM/SIGINT
+    - Automatic restart on crashes
+    - Clean WebSocket reconnection
+
     Called from Django management command.
     """
-    logger.info("[PBX-MONITOR] Starting Buffalo PBX monitor...")
-    logger.info(f"[PBX-MONITOR] Connecting to {settings.APP_SETTINGS.buffalo_pbx.wss_url}")
+    logger.info("[PBX-MONITOR] Starting Buffalo PBX monitor with feature flag control...")
+    logger.info(f"[PBX-MONITOR] Target: {settings.APP_SETTINGS.buffalo_pbx.wss_url}")
 
-    try:
-        asyncio.run(connect_to_buffalo_pbx())
-    except KeyboardInterrupt:
-        logger.info("[PBX-MONITOR] Shutting down gracefully...")
-    except Exception as e:
-        logger.error(f"[PBX-MONITOR] Fatal error: {e}", exc_info=True)
-        raise
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
+    logger.info("[PBX-MONITOR] Registered SIGTERM and SIGINT handlers")
+
+    # Outer control loop - checks feature flag every 30 seconds
+    while True:
+        try:
+            # Check if PBX monitor is enabled via feature flag
+            from apps.feature_flags.services import is_feature_enabled
+
+            if is_feature_enabled('pbx-monitor', default=True):
+                logger.info("[PBX-MONITOR] ✅ Feature flag enabled, starting monitor...")
+
+                try:
+                    # Start the monitor (blocking until error or shutdown)
+                    asyncio.run(connect_to_buffalo_pbx())
+                except KeyboardInterrupt:
+                    logger.info("[PBX-MONITOR] Shutdown signal received, exiting...")
+                    break
+                except Exception as e:
+                    logger.error(
+                        f"[PBX-MONITOR] Monitor crashed with error: {e}",
+                        exc_info=True
+                    )
+                    logger.info("[PBX-MONITOR] Will restart after 30 second delay...")
+
+            else:
+                logger.info("[PBX-MONITOR] ⏸️  Feature flag disabled, monitor paused")
+
+            # Wait 30 seconds before checking flag again
+            logger.debug("[PBX-MONITOR] Sleeping 30 seconds before next flag check...")
+            time.sleep(30)
+
+        except KeyboardInterrupt:
+            logger.info("[PBX-MONITOR] Shutdown signal during control loop, exiting...")
+            break
+        except Exception as e:
+            logger.error(
+                f"[PBX-MONITOR] Unexpected error in control loop: {e}",
+                exc_info=True
+            )
+            logger.info("[PBX-MONITOR] Will retry after 30 second delay...")
+            time.sleep(30)
+
+    logger.info("[PBX-MONITOR] Monitor stopped")

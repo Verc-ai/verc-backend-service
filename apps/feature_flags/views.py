@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def get_default_feature_flags():
     """
     Get default feature flags to enable basic functionality.
-    
+
     Returns:
         list: List of default feature flag dictionaries
     """
@@ -33,6 +33,14 @@ def get_default_feature_flags():
             'key': 'call-history',
             'name': 'Call History',
             'description': 'Enable call history page',
+            'enabled': True,
+            'metadata': None,
+        },
+        {
+            'id': 'default-pbx-monitor',
+            'key': 'pbx-monitor',
+            'name': 'Buffalo PBX Monitor',
+            'description': 'Enable Buffalo PBX WebSocket monitor for automated SPY call recording',
             'enabled': True,
             'metadata': None,
         },

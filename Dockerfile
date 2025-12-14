@@ -33,16 +33,8 @@ RUN python manage.py collectstatic --noinput || echo "Warning: collectstatic fai
 EXPOSE 8080
 
 # Use PORT environment variable (Cloud Run sets this)
-# Use gunicorn for production (WSGI)
-# Use shell form to allow PORT variable expansion
-CMD gunicorn config.wsgi:application \
-    --bind 0.0.0.0:${PORT:-8080} \
-    --workers 2 \
-    --worker-class sync \
-    --timeout 300 \
-    --keep-alive 5 \
-    --access-logfile - \
-    --error-logfile - \
-    --log-level info \
-    --capture-output
+# Run both PBX monitor and Gunicorn
+# PBX monitor runs in background, Gunicorn runs in foreground
+# Both log to stdout → GCP captures all logs
+CMD sh -c "python manage.py monitor_pbx & exec gunicorn config.wsgi:application --bind 0.0.0.0:\${PORT:-8080} --workers 2 --worker-class sync --timeout 300 --keep-alive 5 --access-logfile - --error-logfile - --log-level info --capture-output"
 
