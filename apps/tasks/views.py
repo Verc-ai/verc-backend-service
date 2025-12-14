@@ -715,3 +715,352 @@ class GenerateAIAnalysisView(APIView):
             'message': 'AI analysis task processed'
         }, status=status.HTTP_200_OK)
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class StartSpyCallView(APIView):
+    """
+    POST /api/tasks/start-spy-call
+    Initiate a Twilio SPY call for Buffalo PBX call monitoring.
+
+    Body: {
+        extension, buffaloCallId, direction, caller, destNum,
+        spyNumber, snumber, dnumber, cnumber
+    }
+
+    Note: This endpoint is called by Google Cloud Tasks.
+    Cloud Tasks will include OIDC token authentication and task headers.
+    """
+    permission_classes = [AllowAny]  # Cloud Tasks authenticates via OIDC token
+    parser_classes = [JSONParser]
+
+    def post(self, request):
+        # Log Cloud Tasks headers for debugging
+        task_name = request.headers.get('X-CloudTasks-TaskName', 'N/A')
+        queue_name = request.headers.get('X-CloudTasks-QueueName', 'N/A')
+        print(f'[START-SPY-TASK] 🔵 Cloud Tasks request received: taskName={task_name}, queueName={queue_name}', file=sys.stderr, flush=True)
+        logger.info(
+            f'[START-SPY-TASK] 🔵 Cloud Tasks request received: taskName={task_name}, queueName={queue_name}, '
+            f'path={request.path}, method={request.method}'
+        )
+
+        # Extract request data
+        extension = request.data.get('extension')
+        buffalo_call_id = request.data.get('buffaloCallId')
+        direction = request.data.get('direction')
+        caller = request.data.get('caller')
+        dest_num = request.data.get('destNum')
+        spy_number = request.data.get('spyNumber')
+
+        # Validate required fields
+        if not extension or not buffalo_call_id:
+            logger.error(f'[START-SPY-TASK] Missing required fields: extension={extension}, buffaloCallId={buffalo_call_id}')
+            return Response(
+                {'error': 'Missing extension or buffaloCallId'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        logger.info(
+            f'[START-SPY-TASK] Initiating SPY call - Extension={extension}, '
+            f'BuffaloCallId={buffalo_call_id}, Direction={direction}'
+        )
+
+        # Build call_details dict for initiate_spy_call
+        call_details = {
+            'callId': buffalo_call_id,
+            'direction': direction or 'UNKNOWN',
+            'caller': caller or 'Unknown',
+            'destNum': dest_num or 'N/A',
+            'spyNumber': spy_number or extension,
+            'snumber': request.data.get('snumber'),
+            'dnumber': request.data.get('dnumber'),
+            'cnumber': request.data.get('cnumber'),
+        }
+
+        # Call initiate_spy_call service
+        from apps.twilio.services import initiate_spy_call
+
+        result = initiate_spy_call(extension, call_details)
+
+        if result['success']:
+            logger.info(
+                f'[START-SPY-TASK] ✅ SPY call initiated successfully - '
+                f'CallSid={result["call_sid"]}, SessionId={result["session_id"]}, '
+                f'BuffaloCallId={buffalo_call_id}'
+            )
+            print(
+                f'[START-SPY-TASK] ✅ SPY call initiated - CallSid={result["call_sid"]}, '
+                f'SessionId={result["session_id"]}', file=sys.stderr, flush=True
+            )
+            return Response({
+                'success': True,
+                'callSid': result['call_sid'],
+                'sessionId': result['session_id'],
+                'buffaloCallId': buffalo_call_id
+            }, status=status.HTTP_200_OK)
+        else:
+            logger.error(
+                f'[START-SPY-TASK] ❌ Failed to initiate SPY call - '
+                f'Extension={extension}, BuffaloCallId={buffalo_call_id}, Error={result["error"]}'
+            )
+            print(
+                f'[START-SPY-TASK] ❌ Failed to initiate SPY call: {result["error"]}',
+                file=sys.stderr, flush=True
+            )
+            # Return 500 to trigger Cloud Tasks retry
+            return Response({
+                'success': False,
+                'error': result['error'],
+                'buffaloCallId': buffalo_call_id
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CleanupSpyCallView(APIView):
+    """
+    POST /api/tasks/cleanup-spy-call
+    Cleanup SPY call: hangup, poll for recording, upload, trigger transcription.
+
+    Body: { buffaloCallId }
+
+    Note: This endpoint is called by Google Cloud Tasks.
+    Cloud Tasks will include OIDC token authentication and task headers.
+    """
+    permission_classes = [AllowAny]  # Cloud Tasks authenticates via OIDC token
+    parser_classes = [JSONParser]
+
+    def post(self, request):
+        # Log Cloud Tasks headers for debugging
+        task_name = request.headers.get('X-CloudTasks-TaskName', 'N/A')
+        queue_name = request.headers.get('X-CloudTasks-QueueName', 'N/A')
+        print(f'[CLEANUP-SPY-TASK] 🔵 Cloud Tasks request received: taskName={task_name}, queueName={queue_name}', file=sys.stderr, flush=True)
+        logger.info(
+            f'[CLEANUP-SPY-TASK] 🔵 Cloud Tasks request received: taskName={task_name}, queueName={queue_name}, '
+            f'path={request.path}, method={request.method}'
+        )
+
+        buffalo_call_id = request.data.get('buffaloCallId')
+
+        if not buffalo_call_id:
+            logger.error('[CLEANUP-SPY-TASK] Missing required field: buffaloCallId')
+            return Response(
+                {'error': 'Missing buffaloCallId'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        logger.info(f'[CLEANUP-SPY-TASK] Starting cleanup for BuffaloCallId={buffalo_call_id}')
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.error('[CLEANUP-SPY-TASK] Supabase client not available')
+            return Response(
+                {'error': 'Supabase not available'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        try:
+            config = settings.APP_SETTINGS.supabase
+            sessions_table = config.sessions_table
+
+            # Step 1: Find session by buffalo_call_id
+            result = supabase.table(sessions_table).select('id, call_sid, status').eq('buffalo_call_id', buffalo_call_id).execute()
+
+            if not result.data or len(result.data) == 0:
+                logger.info(f'[CLEANUP-SPY-TASK] No SPY call found for BuffaloCallId={buffalo_call_id}')
+                return Response({
+                    'success': True,
+                    'message': 'No SPY call found',
+                    'buffaloCallId': buffalo_call_id
+                }, status=status.HTTP_200_OK)
+
+            session_data = result.data[0]
+            session_id = session_data['id']
+            call_sid = session_data.get('call_sid')
+            status_value = session_data.get('status')
+
+            logger.info(
+                f'[CLEANUP-SPY-TASK] Found session - SessionId={session_id}, '
+                f'CallSid={call_sid}, Status={status_value}'
+            )
+
+            if not call_sid:
+                logger.warning(f'[CLEANUP-SPY-TASK] Session {session_id} has no call_sid')
+                return Response({
+                    'success': True,
+                    'message': 'Session has no call_sid',
+                    'sessionId': session_id
+                }, status=status.HTTP_200_OK)
+
+            # Step 2: Hangup the call (if still active)
+            if status_value in ['initiated', 'calling', 'in_progress']:
+                logger.info(f'[CLEANUP-SPY-TASK] Hanging up call - CallSid={call_sid}')
+                from apps.twilio.services import hangup_call
+
+                hangup_result = hangup_call(call_sid, reason='Buffalo PBX call terminated')
+
+                if hangup_result['success']:
+                    logger.info(f'[CLEANUP-SPY-TASK] ✅ Call hung up - CallSid={call_sid}')
+                else:
+                    logger.warning(f'[CLEANUP-SPY-TASK] Failed to hangup call: {hangup_result["error"]}')
+            else:
+                logger.info(f'[CLEANUP-SPY-TASK] Call already in terminal status: {status_value}')
+
+            # Step 3: Poll Twilio API for recording (10s interval, max 5 minutes)
+            import time
+            from twilio.rest import Client
+            from twilio.base.exceptions import TwilioRestException
+
+            client = Client(
+                settings.APP_SETTINGS.twilio.account_sid,
+                settings.APP_SETTINGS.twilio.auth_token
+            )
+
+            max_poll_time = 300  # 5 minutes
+            poll_interval = 10  # 10 seconds
+            elapsed_time = 0
+            recording_sid = None
+            recording_url = None
+
+            logger.info(f'[CLEANUP-SPY-TASK] Polling for recording - CallSid={call_sid}')
+
+            while elapsed_time < max_poll_time:
+                try:
+                    # Fetch recordings for this call
+                    recordings = client.recordings.list(call_sid=call_sid, limit=1)
+
+                    if recordings and len(recordings) > 0:
+                        recording = recordings[0]
+                        recording_sid = recording.sid
+                        recording_url = recording.uri
+                        logger.info(
+                            f'[CLEANUP-SPY-TASK] ✅ Recording found - RecordingSid={recording_sid}, '
+                            f'CallSid={call_sid}'
+                        )
+                        break
+
+                    # No recording yet, wait and retry
+                    time.sleep(poll_interval)
+                    elapsed_time += poll_interval
+                    logger.debug(f'[CLEANUP-SPY-TASK] No recording yet, elapsed={elapsed_time}s')
+
+                except TwilioRestException as e:
+                    logger.error(f'[CLEANUP-SPY-TASK] Twilio API error polling recordings: {e}')
+                    break
+
+            if not recording_sid:
+                logger.warning(
+                    f'[CLEANUP-SPY-TASK] No recording found after {elapsed_time}s - '
+                    f'CallSid={call_sid}, SessionId={session_id}'
+                )
+                # Update session status to indicate no recording
+                supabase.table(sessions_table).update({
+                    'status': 'completed',
+                    'last_event_received_at': format_timestamp()
+                }).eq('id', session_id).execute()
+
+                return Response({
+                    'success': True,
+                    'message': 'No recording found',
+                    'sessionId': session_id,
+                    'buffaloCallId': buffalo_call_id
+                }, status=status.HTTP_200_OK)
+
+            # Step 4: Download recording from Twilio
+            logger.info(f'[CLEANUP-SPY-TASK] Downloading recording - RecordingSid={recording_sid}')
+            from apps.twilio.services import download_twilio_recording
+
+            download_result = download_twilio_recording(recording_sid, recording_url)
+
+            if not download_result['success']:
+                logger.error(f'[CLEANUP-SPY-TASK] Failed to download recording: {download_result["error"]}')
+                return Response({
+                    'success': False,
+                    'error': f'Failed to download recording: {download_result["error"]}',
+                    'sessionId': session_id
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            audio_bytes = download_result['audio_bytes']
+            content_type = download_result['content_type']
+
+            # Step 5: Upload recording to Supabase Storage
+            logger.info(f'[CLEANUP-SPY-TASK] Uploading recording to storage - SessionId={session_id}')
+            from apps.twilio.services import upload_recording_to_storage
+
+            upload_result = upload_recording_to_storage(
+                session_id, recording_sid, audio_bytes, content_type
+            )
+
+            if not upload_result['success']:
+                logger.error(f'[CLEANUP-SPY-TASK] Failed to upload recording: {upload_result["error"]}')
+                return Response({
+                    'success': False,
+                    'error': f'Failed to upload recording: {upload_result["error"]}',
+                    'sessionId': session_id
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            storage_path = upload_result['storage_path']
+
+            # Step 6: Update session with recording metadata
+            logger.info(f'[CLEANUP-SPY-TASK] Updating session with recording metadata - SessionId={session_id}')
+            supabase.table(sessions_table).update({
+                'recording_sid': recording_sid,
+                'audio_storage_path': storage_path,
+                'status': 'recorded',
+                'last_event_received_at': format_timestamp()
+            }).eq('id', session_id).execute()
+
+            # Step 7: Enqueue transcription task (chain to existing pipeline)
+            logger.info(f'[CLEANUP-SPY-TASK] Triggering transcription pipeline - SessionId={session_id}')
+
+            cloud_tasks_config = settings.APP_SETTINGS.cloud_tasks
+
+            if cloud_tasks_config.enabled:
+                # Production/Staging: Use Cloud Tasks
+                service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+                if not service_url:
+                    k_service = os.getenv('K_SERVICE')
+                    if k_service:
+                        service_url = f'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+                    else:
+                        service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+
+                from apps.core.services.cloud_tasks import enqueue_transcription_task
+                transcription_queued = enqueue_transcription_task(session_id, storage_path, service_url)
+
+                if transcription_queued:
+                    logger.info(f'[CLEANUP-SPY-TASK] ✅ Transcription task queued - SessionId={session_id}')
+                else:
+                    logger.warning(f'[CLEANUP-SPY-TASK] Failed to queue transcription task')
+            else:
+                # Local development: Use background processing
+                from apps.core.services.background_tasks import process_transcription_locally
+                logger.info(f'[CLEANUP-SPY-TASK] 🔵 Triggering local transcription (Cloud Tasks disabled)')
+                print(f'[CLEANUP-SPY-TASK] 🔵 Triggering local transcription', file=sys.stderr, flush=True)
+                process_transcription_locally(session_id, storage_path)
+
+            logger.info(
+                f'[CLEANUP-SPY-TASK] ✅ Cleanup completed - SessionId={session_id}, '
+                f'BuffaloCallId={buffalo_call_id}, RecordingSid={recording_sid}'
+            )
+
+            return Response({
+                'success': True,
+                'sessionId': session_id,
+                'buffaloCallId': buffalo_call_id,
+                'recordingSid': recording_sid,
+                'storagePath': storage_path,
+                'message': 'Cleanup completed, transcription queued'
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(
+                f'[CLEANUP-SPY-TASK] ❌ Error during cleanup - '
+                f'BuffaloCallId={buffalo_call_id}, Error={str(e)}',
+                exc_info=True
+            )
+            return Response({
+                'success': False,
+                'error': str(e),
+                'buffaloCallId': buffalo_call_id
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

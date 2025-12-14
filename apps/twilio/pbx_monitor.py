@@ -180,21 +180,46 @@ async def process_buffalo_event(event: dict):
             f"Agent={agent_ext}, Direction={call_details['direction']}"
         )
 
-        # Initiate SPY call via Twilio
-        from apps.twilio.services import initiate_spy_call
+        # Enqueue SPY call initiation via Cloud Tasks (non-blocking)
+        from apps.core.services.cloud_tasks import enqueue_start_spy_call_task
+        import os
 
-        result = initiate_spy_call(agent_ext, call_details)
+        # Get service URL from environment
+        service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+        if not service_url:
+            # Fallback for local development or staging
+            k_service = os.getenv('K_SERVICE')
+            if k_service:
+                service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+            else:
+                # Local development
+                service_url = os.getenv('WEBHOOK_BASE_URL', 'http://localhost:8080')
 
-        if result['success']:
+        task_queued = enqueue_start_spy_call_task(agent_ext, call_details, service_url)
+
+        if task_queued:
             logger.info(
-                f"[PBX-ANSWERED] SPY call initiated successfully - "
-                f"CallSid={result['call_sid']}, SessionId={result['session_id']}"
+                f"[PBX-ANSWERED] ✅ SPY call task enqueued - "
+                f"Extension={agent_ext}, BuffaloCallId={call_id}"
             )
         else:
-            logger.error(
-                f"[PBX-ANSWERED] Failed to initiate SPY call - "
-                f"Extension={agent_ext}, Error={result['error']}"
+            logger.warning(
+                f"[PBX-ANSWERED] ⚠️ Failed to enqueue SPY call task (Cloud Tasks not available) - "
+                f"Extension={agent_ext}, BuffaloCallId={call_id}"
             )
+            # Fallback: Try direct call if Cloud Tasks is not available
+            from apps.twilio.services import initiate_spy_call
+            result = initiate_spy_call(agent_ext, call_details)
+            if result['success']:
+                logger.info(
+                    f"[PBX-ANSWERED] ✅ SPY call initiated directly (fallback) - "
+                    f"CallSid={result['call_sid']}, SessionId={result['session_id']}"
+                )
+            else:
+                logger.error(
+                    f"[PBX-ANSWERED] ❌ Failed to initiate SPY call - "
+                    f"Extension={agent_ext}, Error={result['error']}"
+                )
 
         # Remove from pending (answered calls are now active)
         del pending_calls[call_id]
@@ -207,8 +232,34 @@ async def process_buffalo_event(event: dict):
         else:
             logger.debug(f"[PBX-TERMINATED] CallId={call_id} ended")
 
-        # Cleanup SPY call if it exists
-        await cleanup_spy_call(call_id)
+        # Enqueue cleanup task via Cloud Tasks (non-blocking)
+        from apps.core.services.cloud_tasks import enqueue_cleanup_spy_call_task
+        import os
+
+        # Get service URL from environment
+        service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+        if not service_url:
+            # Fallback for local development or staging
+            k_service = os.getenv('K_SERVICE')
+            if k_service:
+                service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+            else:
+                # Local development
+                service_url = os.getenv('WEBHOOK_BASE_URL', 'http://localhost:8080')
+
+        task_queued = enqueue_cleanup_spy_call_task(call_id, service_url)
+
+        if task_queued:
+            logger.info(
+                f"[PBX-TERMINATED] ✅ Cleanup task enqueued - BuffaloCallId={call_id}"
+            )
+        else:
+            logger.warning(
+                f"[PBX-TERMINATED] ⚠️ Failed to enqueue cleanup task (Cloud Tasks not available) - "
+                f"BuffaloCallId={call_id}"
+            )
+            # Fallback: Try direct cleanup if Cloud Tasks is not available
+            await cleanup_spy_call(call_id)
 
 
 async def cleanup_spy_call(buffalo_call_id: str):
