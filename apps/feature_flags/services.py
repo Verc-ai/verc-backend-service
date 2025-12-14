@@ -59,7 +59,7 @@ def is_feature_enabled(flag_key: str, default: bool = False) -> bool:
             return default
 
         # Query feature flags table
-        result = supabase.table('feature_flags').select('enabled').eq('key', flag_key).execute()
+        result = supabase.table('feature_flags').select('enabled').eq('flag_key', flag_key).execute()
 
         if not result.data or len(result.data) == 0:
             # Flag not found in database - use default
