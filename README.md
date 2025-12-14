@@ -65,12 +65,12 @@ backend-service/
 
 1. **Clone and navigate to the project:**
    ```bash
-   cd backend-service
+   cd verc-backend-service
    ```
 
 2. **Create virtual environment:**
    ```bash
-   python3.11 -m venv venv
+   python3.12 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
@@ -81,26 +81,47 @@ backend-service/
 
 4. **Set up environment variables:**
    ```bash
-   cp .env.example .env
+   cp env.example .env
    # Edit .env with your configuration
+   # Minimum required:
+   # - SECRET_KEY (generate: python -c "import secrets; print(secrets.token_urlsafe(50))")
+   # - SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+   # - CORS_ALLOWED_ORIGINS=http://localhost:5173
    ```
 
-5. **Run migrations:**
+5. **Run migrations (if using local DB):**
    ```bash
    python manage.py migrate
    ```
 
-6. **Create superuser (optional):**
+6. **Run development server:**
    ```bash
-   python manage.py createsuperuser
+   python manage.py runserver 0.0.0.0:8080
+   # OR use the convenience script:
+   ./run-local.sh
    ```
 
-7. **Run development server:**
-   ```bash
-   python manage.py runserver
-   ```
+   The server will run on `http://localhost:8080`
 
-   The server will run on `http://localhost:8080` (or the port specified in `API_PORT`).
+   **Health Check:** http://localhost:8080/health
+
+   **Note:** The root endpoint (`http://localhost:8080/`) returns a "Coming Soon" page for browsers. For API testing, use specific endpoints like `/health` or `/api/sessions/`.
+
+### Verify Backend is Running
+
+```bash
+# Check if backend is running on port 8080
+lsof -ti:8080 && echo "✅ Backend is running" || echo "❌ Backend is NOT running"
+
+# Test health endpoint
+curl http://localhost:8080/health
+# Should return: {"status": "healthy", "service": "verc-backend", ...}
+```
+
+**If you get "This site can't be reached":**
+- Backend server is not running
+- Start it: `cd verc-backend-service && source venv/bin/activate && python manage.py runserver 0.0.0.0:8080`
+- Check for errors in the terminal
 
 ### Testing
 

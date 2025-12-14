@@ -267,6 +267,7 @@ INSTALLED_APPS = [
     'apps.administration',
     'apps.feature_flags',
     'apps.tasks',
+    'apps.analytics',
 ]
 
 MIDDLEWARE = [
