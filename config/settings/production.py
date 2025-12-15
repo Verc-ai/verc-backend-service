@@ -38,11 +38,12 @@ LOGGING['handlers']['console']['formatter'] = 'json'
 
 # Performance optimizations
 if not DEBUG:
-    # Cache backend (use Redis in production)
+    # Cache backend (use in-memory cache to avoid Redis dependency in Cloud Run)
+    # Feature flags are cached for 60s and rarely change, so per-instance cache is fine
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
         }
     }
 
