@@ -759,6 +759,20 @@ class StartSpyCallView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Check if PBX monitor feature is enabled
+        from apps.feature_flags.services import is_feature_enabled
+        if not is_feature_enabled('pbx-monitor', default=True):
+            logger.info(
+                f'[START-SPY-TASK] ⏸️  PBX monitor feature disabled, skipping SPY call - '
+                f'Extension={extension}, BuffaloCallId={buffalo_call_id}'
+            )
+            return Response({
+                'success': True,
+                'skipped': True,
+                'reason': 'PBX monitor feature disabled',
+                'buffaloCallId': buffalo_call_id
+            }, status=status.HTTP_200_OK)
+
         logger.info(
             f'[START-SPY-TASK] Initiating SPY call - Extension={extension}, '
             f'BuffaloCallId={buffalo_call_id}, Direction={direction}'
