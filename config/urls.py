@@ -13,7 +13,6 @@ from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from apps.authentication import views as auth_views
-import os
 
 
 # Production now uses same Supabase database as staging
@@ -155,17 +154,6 @@ urlpatterns = [
     # Health check endpoints (support both with and without trailing slash for compatibility)
     path('health/', lambda request: JsonResponse(_health_check_response(request)), name='health'),
     path('health', lambda request: JsonResponse(_health_check_response(request)), name='health-no-slash'),
-    
-    # Debug endpoint to check environment variables (for troubleshooting)
-    path('debug/env', lambda request: JsonResponse({
-        'k_service': os.getenv('K_SERVICE'),
-        'k_revision': os.getenv('K_REVISION'),
-        'k_configuration': os.getenv('K_CONFIGURATION'),
-        'cloud_run_service_url': os.getenv('CLOUD_RUN_SERVICE_URL'),
-        'webhook_base_url': os.getenv('WEBHOOK_BASE_URL'),
-        'port': os.getenv('PORT'),
-        'all_k_vars': {k: v for k, v in os.environ.items() if k.startswith('K_')},
-    }), name='debug-env'),
     
     # Authentication endpoints
     # Explicit patterns prevent Django URL resolver redirects
