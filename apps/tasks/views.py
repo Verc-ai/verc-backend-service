@@ -863,7 +863,9 @@ class CleanupSpyCallView(APIView):
             sessions_table = config.sessions_table
 
             # Step 1: Find session by buffalo_call_id
-            result = supabase.table(sessions_table).select('id, call_sid, status').eq('buffalo_call_id', buffalo_call_id).execute()
+            result = supabase.table(sessions_table).select(
+                'id, call_sid, status, recording_sid, audio_storage_path'
+            ).eq('buffalo_call_id', buffalo_call_id).execute()
 
             if not result.data or len(result.data) == 0:
                 logger.info(f'[CLEANUP-SPY-TASK] No SPY call found for BuffaloCallId={buffalo_call_id}')
@@ -877,11 +879,76 @@ class CleanupSpyCallView(APIView):
             session_id = session_data['id']
             call_sid = session_data.get('call_sid')
             status_value = session_data.get('status')
+            existing_recording_sid = session_data.get('recording_sid')
+            existing_storage_path = session_data.get('audio_storage_path')
 
             logger.info(
                 f'[CLEANUP-SPY-TASK] Found session - SessionId={session_id}, '
                 f'CallSid={call_sid}, Status={status_value}'
             )
+
+            # Check if recording already exists (downloaded by webhook)
+            if existing_recording_sid and existing_storage_path:
+                logger.info(
+                    f'[CLEANUP-SPY-TASK] ✅ Recording already downloaded - '
+                    f'RecordingSid={existing_recording_sid}, StoragePath={existing_storage_path}, '
+                    f'SessionId={session_id}'
+                )
+                
+                # Check if transcription is already queued or completed
+                if status_value in ['recorded', 'transcribed', 'completed']:
+                    logger.info(
+                        f'[CLEANUP-SPY-TASK] Recording already processed - Status={status_value}, '
+                        f'SessionId={session_id}'
+                    )
+                    return Response({
+                        'success': True,
+                        'message': 'Recording already processed',
+                        'sessionId': session_id,
+                        'buffaloCallId': buffalo_call_id,
+                        'recordingSid': existing_recording_sid,
+                        'storagePath': existing_storage_path
+                    }, status=status.HTTP_200_OK)
+                
+                # Recording exists but transcription not started - trigger transcription
+                logger.info(
+                    f'[CLEANUP-SPY-TASK] Triggering transcription for existing recording - '
+                    f'SessionId={session_id}'
+                )
+                
+                cloud_tasks_config = settings.APP_SETTINGS.cloud_tasks
+                
+                if cloud_tasks_config.enabled:
+                    # Production/Staging: Use Cloud Tasks
+                    service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+                    if not service_url:
+                        k_service = os.getenv('K_SERVICE')
+                        if k_service:
+                            service_url = f'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+                        else:
+                            service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+                    
+                    from apps.core.services.cloud_tasks import enqueue_transcription_task
+                    transcription_queued = enqueue_transcription_task(session_id, existing_storage_path, service_url)
+                    
+                    if transcription_queued:
+                        logger.info(f'[CLEANUP-SPY-TASK] ✅ Transcription task queued - SessionId={session_id}')
+                    else:
+                        logger.warning(f'[CLEANUP-SPY-TASK] Failed to queue transcription task')
+                else:
+                    # Local development: Use background processing
+                    from apps.core.services.background_tasks import process_transcription_locally
+                    logger.info(f'[CLEANUP-SPY-TASK] 🔵 Triggering local transcription (Cloud Tasks disabled)')
+                    process_transcription_locally(session_id, existing_storage_path)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Recording already downloaded, transcription triggered',
+                    'sessionId': session_id,
+                    'buffaloCallId': buffalo_call_id,
+                    'recordingSid': existing_recording_sid,
+                    'storagePath': existing_storage_path
+                }, status=status.HTTP_200_OK)
 
             if not call_sid:
                 logger.warning(f'[CLEANUP-SPY-TASK] Session {session_id} has no call_sid')

@@ -187,15 +187,34 @@ async def process_buffalo_event(event: dict):
         import os
 
         # Get service URL from environment
+        # Priority: 1. CLOUD_RUN_SERVICE_URL (explicit), 2. WEBHOOK_BASE_URL (local dev), 3. Staging URL (default)
         service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+        k_service = os.getenv('K_SERVICE')
+        webhook_base_url = os.getenv('WEBHOOK_BASE_URL')
+        staging_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+        
+        logger.debug(
+            f"[PBX-ANSWERED] Environment check - "
+            f"CLOUD_RUN_SERVICE_URL={service_url}, "
+            f"K_SERVICE={k_service}, "
+            f"WEBHOOK_BASE_URL={webhook_base_url}"
+        )
+        
         if not service_url:
-            # Fallback for local development or staging
-            k_service = os.getenv('K_SERVICE')
+            # Check if running in Cloud Run (K_SERVICE is set automatically by Cloud Run)
             if k_service:
-                service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+                logger.info(f"[PBX-ANSWERED] K_SERVICE detected: {k_service}, using staging URL")
+                service_url = staging_url
+            elif webhook_base_url:
+                # Explicit local development override
+                logger.info(f"[PBX-ANSWERED] Using WEBHOOK_BASE_URL for local development: {webhook_base_url}")
+                service_url = webhook_base_url
             else:
-                # Local development
-                service_url = os.getenv('WEBHOOK_BASE_URL', 'http://localhost:8080')
+                # Default to staging URL (PBX monitor typically needs to call Cloud Run, not localhost)
+                logger.info(f"[PBX-ANSWERED] No explicit URL set, defaulting to staging URL")
+                service_url = staging_url
+        
+        logger.info(f"[PBX-ANSWERED] Using service URL: {service_url}")
 
         task_queued = enqueue_start_spy_call_task(agent_ext, call_details, service_url)
 
@@ -239,15 +258,34 @@ async def process_buffalo_event(event: dict):
         import os
 
         # Get service URL from environment
+        # Priority: 1. CLOUD_RUN_SERVICE_URL (explicit), 2. WEBHOOK_BASE_URL (local dev), 3. Staging URL (default)
         service_url = os.getenv('CLOUD_RUN_SERVICE_URL')
+        k_service = os.getenv('K_SERVICE')
+        webhook_base_url = os.getenv('WEBHOOK_BASE_URL')
+        staging_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+        
+        logger.debug(
+            f"[PBX-TERMINATED] Environment check - "
+            f"CLOUD_RUN_SERVICE_URL={service_url}, "
+            f"K_SERVICE={k_service}, "
+            f"WEBHOOK_BASE_URL={webhook_base_url}"
+        )
+        
         if not service_url:
-            # Fallback for local development or staging
-            k_service = os.getenv('K_SERVICE')
+            # Check if running in Cloud Run (K_SERVICE is set automatically by Cloud Run)
             if k_service:
-                service_url = 'https://verc-app-staging-clw2hnetfa-uk.a.run.app'
+                logger.info(f"[PBX-TERMINATED] K_SERVICE detected: {k_service}, using staging URL")
+                service_url = staging_url
+            elif webhook_base_url:
+                # Explicit local development override
+                logger.info(f"[PBX-TERMINATED] Using WEBHOOK_BASE_URL for local development: {webhook_base_url}")
+                service_url = webhook_base_url
             else:
-                # Local development
-                service_url = os.getenv('WEBHOOK_BASE_URL', 'http://localhost:8080')
+                # Default to staging URL (PBX monitor typically needs to call Cloud Run, not localhost)
+                logger.info(f"[PBX-TERMINATED] No explicit URL set, defaulting to staging URL")
+                service_url = staging_url
+        
+        logger.info(f"[PBX-TERMINATED] Using service URL: {service_url}")
 
         task_queued = enqueue_cleanup_spy_call_task(call_id, service_url)
 
