@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # Key: call_id, Value: call details dict
 pending_calls: Dict[str, dict] = {}
 
+# Track answered calls to prevent duplicate SPY call creation
+# Buffalo PBX sometimes sends duplicate "answered" events
+processed_answered_calls: set = set()
+
 
 async def connect_to_buffalo_pbx():
     """
@@ -174,6 +178,16 @@ async def process_buffalo_event(event: dict):
 
     # ANSWERED: Call was picked up
     elif event_type == 'answered' and call_id in pending_calls:
+        # Check if we've already processed this answered event (duplicate prevention)
+        if call_id in processed_answered_calls:
+            logger.debug(
+                f"[PBX-ANSWERED] Already processed {call_id}, skipping duplicate"
+            )
+            return
+
+        # Mark as processed to prevent duplicate SPY calls
+        processed_answered_calls.add(call_id)
+
         call_details = pending_calls[call_id]
         agent_ext = call_details['spyNumber']
 
@@ -252,6 +266,9 @@ async def process_buffalo_event(event: dict):
             del pending_calls[call_id]
         else:
             logger.debug(f"[PBX-TERMINATED] CallId={call_id} ended")
+
+        # Remove from processed set to allow cleanup
+        processed_answered_calls.discard(call_id)
 
         # Enqueue cleanup task via Cloud Tasks (non-blocking)
         from apps.core.services.cloud_tasks import enqueue_cleanup_spy_call_task

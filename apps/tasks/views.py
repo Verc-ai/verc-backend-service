@@ -1058,21 +1058,42 @@ class CleanupSpyCallView(APIView):
             )
 
             if not upload_result['success']:
-                logger.error(f'[CLEANUP-SPY-TASK] Failed to upload recording: {upload_result["error"]}')
-                return Response({
-                    'success': False,
-                    'error': f'Failed to upload recording: {upload_result["error"]}',
-                    'sessionId': session_id
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                # Check if it's a duplicate error (file already uploaded by recording webhook)
+                error = upload_result.get('error', '')
+                is_duplicate = (
+                    isinstance(error, dict) and error.get('error') == 'Duplicate'
+                ) or (
+                    isinstance(error, str) and 'already exists' in error.lower()
+                )
 
-            storage_path = upload_result['storage_path']
+                if is_duplicate:
+                    logger.info(
+                        f'[CLEANUP-SPY-TASK] Recording already uploaded by webhook, skipping upload - '
+                        f'SessionId={session_id}'
+                    )
+                    # Continue without error - recording already exists
+                    # Use session's existing storage path if available
+                    storage_path = session_data.get('audio_storage_path')
+                    if not storage_path:
+                        # Construct expected path
+                        storage_path = f'twilio-recordings/{session_id}/{recording_sid}.wav'
+                else:
+                    # Other upload error - return error
+                    logger.error(f'[CLEANUP-SPY-TASK] Failed to upload recording: {upload_result["error"]}')
+                    return Response({
+                        'success': False,
+                        'error': f'Failed to upload recording: {upload_result["error"]}',
+                        'sessionId': session_id
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            else:
+                storage_path = upload_result['storage_path']
 
             # Step 6: Update session with recording metadata
             logger.info(f'[CLEANUP-SPY-TASK] Updating session with recording metadata - SessionId={session_id}')
             supabase.table(sessions_table).update({
                 'recording_sid': recording_sid,
                 'audio_storage_path': storage_path,
-                'status': 'recorded',
+                'status': 'transcribing',
                 'last_event_received_at': format_timestamp()
             }).eq('id', session_id).execute()
 
