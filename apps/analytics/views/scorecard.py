@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from apps.analytics.services.aggregations import get_scorecard_metrics
+from apps.analytics.services.aggregations import get_scorecard_metrics, get_scorecard_summaries
 from apps.analytics.services.cache import get_cached_scorecard, cache_scorecard
 import logging
 
@@ -75,12 +75,18 @@ class ScorecardView(APIView):
         try:
             # Get metrics from aggregation service
             metrics_data = get_scorecard_metrics(user, period, start_date, end_date)
-            
+
+            # Get scorecard summaries (compliance, servicing, collections pass/fail)
+            scorecard_summaries = get_scorecard_summaries(user, period, start_date, end_date)
+
+            # Combine both datasets
+            metrics_data["scorecard_summaries"] = scorecard_summaries
+
             logger.info(f'Scorecard data retrieved: period={metrics_data.get("period")}, total_calls={metrics_data.get("metrics", {}).get("total_calls")}')
-            
+
             # Cache the result - 60 seconds TTL for good balance
             cache_scorecard(cache_key, metrics_data, ttl=60)
-            
+
             return Response(metrics_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f'Error fetching scorecard metrics: {e}', exc_info=True)

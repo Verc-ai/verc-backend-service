@@ -11,6 +11,10 @@ from apps.analytics.services.queries import (
     get_period_dates,
     get_call_intents,
     get_sentiment_distribution,
+    get_compliance_scorecard_summary,
+    get_servicing_scorecard_summary,
+    get_collections_scorecard_summary,
+    _calculate_scorecard_delta,
 )
 import logging
 
@@ -117,5 +121,55 @@ def get_health_metrics(user, period: str) -> Dict[str, Any]:
             "uptime_percentage": 99.8,  # Placeholder
             "total_errors": 12,  # Placeholder
         }
+    }
+
+
+def get_scorecard_summaries(user, period: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get pass/fail summaries for all scorecard categories with delta calculations.
+
+    Returns counts and percentages for compliance, servicing, and collections scorecards.
+    Works for both existing calls (calculated on-the-fly) and new calls (pre-stored pass/fail).
+
+    Args:
+        user: Django user object (for tenant filtering)
+        period: Time period string
+        start_date: Optional ISO date string for custom range
+        end_date: Optional ISO date string for custom range
+
+    Returns:
+        dict: Scorecard summaries with pass/fail counts, percentages, and deltas
+    """
+    user_id = str(user.id) if user else None
+
+    # Get summaries for each scorecard type
+    compliance_summary = get_compliance_scorecard_summary(user_id, period, start_date, end_date)
+    servicing_summary = get_servicing_scorecard_summary(user_id, period, start_date, end_date)
+    collections_summary = get_collections_scorecard_summary(user_id, period, start_date, end_date)
+
+    # Calculate deltas
+    compliance_delta = _calculate_scorecard_delta(compliance_summary, period, 'compliance', user_id, start_date, end_date)
+    servicing_delta = _calculate_scorecard_delta(servicing_summary, period, 'servicing', user_id, start_date, end_date)
+    collections_delta = _calculate_scorecard_delta(collections_summary, period, 'collections', user_id, start_date, end_date)
+
+    # Build response with pass percentages
+    def build_summary(summary, delta):
+        total = summary["total_count"]
+        pass_count = summary["pass_count"]
+        fail_count = summary["fail_count"]
+        pass_percentage = round((pass_count / total * 100), 2) if total > 0 else 0.0
+
+        return {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "total_count": total,
+            "pass_percentage": pass_percentage,
+            "delta_percentage": delta,
+        }
+
+    return {
+        "compliance": build_summary(compliance_summary, compliance_delta),
+        "servicing": build_summary(servicing_summary, servicing_delta),
+        "collections": build_summary(collections_summary, collections_delta),
     }
 

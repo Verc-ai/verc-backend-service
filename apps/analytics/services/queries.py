@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from apps.core.services.supabase import get_supabase_client
+from apps.ai.constants import SCORECARD_THRESHOLDS
 from django.conf import settings
 import logging
 
@@ -104,14 +105,15 @@ def get_sessions_count(user_id: Optional[str], period: str, start_date_str: Opti
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         logger.info(f"Fetching sessions count for period {period}: {query_start_str} to {query_end_str}")
-        
+
         query = (
             supabase.table(config.sessions_table)
             .select("id", count="exact")
             .gte("created_at", query_start_str)
             .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
-        
+
         # TODO: Add tenant filtering when user_id is provided
         # This requires understanding the tenant/user relationship in your schema
         
@@ -149,7 +151,7 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         logger.info(f"Fetching acceptance rate for period {period}: {query_start_str} to {query_end_str}")
-        
+
         # Fetch sessions with metadata that might contain acceptance status
         # This is a placeholder - adjust based on your actual schema
         query = (
@@ -157,6 +159,7 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
             .select("id, metadata")
             .gte("created_at", query_start_str)
             .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
         response = query.execute()
@@ -208,13 +211,14 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         logger.info(f"Fetching avg handle time for period {period}: {query_start_str} to {query_end_str}")
-        
+
         # Use last_event_received_at instead of last_event_at (matches actual schema)
         query = (
             supabase.table(config.sessions_table)
             .select("created_at, last_event_received_at")
             .gte("created_at", query_start_str)
             .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
         response = query.execute()
@@ -274,7 +278,7 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         logger.info(f"Fetching daily metrics for {metric}, period {period}: {query_start_str} to {query_end_str}")
-        
+
         # CRITICAL FIX: Make ONE query instead of one per day!
         # Fetch all data in the date range in a single query
         query = (
@@ -282,6 +286,7 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
             .select("created_at, metadata")
             .gte("created_at", query_start_str)
             .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
         response = query.execute()
@@ -392,12 +397,13 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         logger.info(f"Fetching call intents for period {period}: {query_start_str} to {query_end_str}")
-        
+
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
             .gte("created_at", query_start_str)
             .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
         
@@ -423,66 +429,396 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
 
 def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
     """
-    Get sentiment distribution (positive, neutral, negative).
-    
+    Get sentiment distribution with shift tracking.
+
+    Returns 7 mutually exclusive categories:
+    - positive: Calls that started and stayed positive
+    - neutral: Calls that started and stayed neutral
+    - negative: Calls that started and stayed negative
+    - negative_to_positive: Calls that improved from negative to positive
+    - neutral_to_positive: Calls that improved from neutral to positive
+    - neutral_to_negative: Calls that declined from neutral to negative
+    - positive_to_negative: Calls that declined from positive to negative
+
     Args:
         user_id: User ID for tenant filtering (optional)
         period: Time period string
-        
+
     Returns:
-        dict: {"positive": count, "neutral": count, "negative": count}
+        dict: Count for each of the 7 sentiment categories
     """
     supabase = get_supabase_client()
     if not supabase:
         logger.warning("Supabase client not available")
-        return {"positive": 0, "neutral": 0, "negative": 0}
-    
+        return {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0,
+            "negative_to_positive": 0,
+            "neutral_to_positive": 0,
+            "neutral_to_negative": 0,
+            "positive_to_negative": 0,
+        }
+
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
         config = settings.APP_SETTINGS.supabase
-        
+
         # Format dates as ISO strings for Supabase (without microseconds)
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
-        
+
         logger.info(f"Fetching sentiment distribution for period {period}: {query_start_str} to {query_end_str}")
-        
+
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
             .gte("created_at", query_start_str)
             .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
-        
+
         response = query.execute()
         logger.info(f"Found {len(response.data)} sessions with scorecard data for sentiment")
-        
-        positive_count = 0
-        neutral_count = 0
-        negative_count = 0
-        
+
+        # Initialize counters for all 7 categories
+        sentiment_counts = {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0,
+            "negative_to_positive": 0,
+            "neutral_to_positive": 0,
+            "neutral_to_negative": 0,
+            "positive_to_negative": 0,
+        }
+
         for session in response.data:
             scorecard_data = session.get("call_scorecard_data", {})
             if isinstance(scorecard_data, dict):
-                transcript_sentiments = scorecard_data.get("transcript_sentiments", [])
-                if isinstance(transcript_sentiments, list):
-                    for sentiment_item in transcript_sentiments:
-                        if isinstance(sentiment_item, dict):
-                            score = sentiment_item.get("sentiment_score", 50)
-                            if score >= 60:
-                                positive_count += 1
-                            elif score >= 40:
-                                neutral_count += 1
-                            else:
-                                negative_count += 1
-        
-        return {
-            "positive": positive_count,
-            "neutral": neutral_count,
-            "negative": negative_count,
-        }
+                # Get the pre-calculated sentiment shift category
+                sentiment_category = scorecard_data.get("sentiment_shift_category")
+
+                # If the field exists and is valid, increment the counter
+                if sentiment_category and sentiment_category in sentiment_counts:
+                    sentiment_counts[sentiment_category] += 1
+                # Handle legacy data without sentiment_shift_category
+                # (fallback to old logic for backward compatibility)
+                elif not sentiment_category:
+                    logger.debug(f"Session missing sentiment_shift_category, using legacy calculation")
+                    # This is legacy data - optionally you could recalculate here
+                    # For now, we'll just skip it or count as neutral
+                    sentiment_counts["neutral"] += 1
+
+        logger.info(f"Sentiment distribution: {sentiment_counts}")
+        return sentiment_counts
     except Exception as e:
         logger.error(f"Error fetching sentiment distribution: {e}", exc_info=True)
-        return {"positive": 0, "neutral": 0, "negative": 0}
+        return {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0,
+            "negative_to_positive": 0,
+            "neutral_to_positive": 0,
+            "neutral_to_negative": 0,
+            "positive_to_negative": 0,
+        }
+
+
+def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
+    """
+    Get compliance scorecard pass/fail summary.
+
+    Works for both:
+    - New calls: Uses stored 'pass' field in categories.compliance
+    - Existing calls: Calculates pass/fail from score using threshold (>= 80)
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+
+    Returns:
+        dict: {"pass_count": int, "fail_count": int, "total_count": int}
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.warning("Supabase client not available")
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+    try:
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        config = settings.APP_SETTINGS.supabase
+
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching compliance scorecard summary for period {period}")
+
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_scorecard_data")
+            .gte("created_at", query_start_str)
+            .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_scorecard_data", "null")
+        )
+
+        response = query.execute()
+        logger.info(f"Found {len(response.data)} sessions with scorecard data for compliance summary")
+
+        pass_count = 0
+        fail_count = 0
+        threshold = SCORECARD_THRESHOLDS['compliance']
+
+        for session in response.data:
+            scorecard_data = session.get("call_scorecard_data", {})
+            if isinstance(scorecard_data, dict):
+                categories = scorecard_data.get("categories", {})
+                compliance = categories.get("compliance", {})
+
+                if compliance:
+                    # Check if 'pass' field exists (new calls)
+                    if "pass" in compliance:
+                        if compliance["pass"]:
+                            pass_count += 1
+                        else:
+                            fail_count += 1
+                    # Fallback: calculate from score (existing calls)
+                    elif "score" in compliance:
+                        score = compliance["score"]
+                        if score >= threshold:
+                            pass_count += 1
+                        else:
+                            fail_count += 1
+
+        total_count = pass_count + fail_count
+        logger.info(f"Compliance summary: {pass_count} passes, {fail_count} fails out of {total_count} total")
+
+        return {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "total_count": total_count,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching compliance scorecard summary: {e}", exc_info=True)
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+
+def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
+    """
+    Get servicing scorecard pass/fail summary.
+
+    Works for both:
+    - New calls: Uses stored 'pass' field in categories.servicing
+    - Existing calls: Calculates pass/fail from score using threshold (>= 70)
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+
+    Returns:
+        dict: {"pass_count": int, "fail_count": int, "total_count": int}
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.warning("Supabase client not available")
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+    try:
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        config = settings.APP_SETTINGS.supabase
+
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching servicing scorecard summary for period {period}")
+
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_scorecard_data")
+            .gte("created_at", query_start_str)
+            .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_scorecard_data", "null")
+        )
+
+        response = query.execute()
+        logger.info(f"Found {len(response.data)} sessions with scorecard data for servicing summary")
+
+        pass_count = 0
+        fail_count = 0
+        threshold = SCORECARD_THRESHOLDS['servicing']
+
+        for session in response.data:
+            scorecard_data = session.get("call_scorecard_data", {})
+            if isinstance(scorecard_data, dict):
+                categories = scorecard_data.get("categories", {})
+                servicing = categories.get("servicing", {})
+
+                if servicing:
+                    # Check if 'pass' field exists (new calls)
+                    if "pass" in servicing:
+                        if servicing["pass"]:
+                            pass_count += 1
+                        else:
+                            fail_count += 1
+                    # Fallback: calculate from score (existing calls)
+                    elif "score" in servicing:
+                        score = servicing["score"]
+                        if score >= threshold:
+                            pass_count += 1
+                        else:
+                            fail_count += 1
+
+        total_count = pass_count + fail_count
+        logger.info(f"Servicing summary: {pass_count} passes, {fail_count} fails out of {total_count} total")
+
+        return {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "total_count": total_count,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching servicing scorecard summary: {e}", exc_info=True)
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+
+def get_collections_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
+    """
+    Get collections scorecard pass/fail summary.
+
+    Works for both:
+    - New calls: Uses stored 'pass' field in categories.collections
+    - Existing calls: Calculates pass/fail from score using threshold (>= 75)
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+
+    Returns:
+        dict: {"pass_count": int, "fail_count": int, "total_count": int}
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.warning("Supabase client not available")
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+    try:
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        config = settings.APP_SETTINGS.supabase
+
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching collections scorecard summary for period {period}")
+
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_scorecard_data")
+            .gte("created_at", query_start_str)
+            .lte("created_at", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_scorecard_data", "null")
+        )
+
+        response = query.execute()
+        logger.info(f"Found {len(response.data)} sessions with scorecard data for collections summary")
+
+        pass_count = 0
+        fail_count = 0
+        threshold = SCORECARD_THRESHOLDS['collections']
+
+        for session in response.data:
+            scorecard_data = session.get("call_scorecard_data", {})
+            if isinstance(scorecard_data, dict):
+                categories = scorecard_data.get("categories", {})
+                collections = categories.get("collections", {})
+
+                if collections:
+                    # Check if 'pass' field exists (new calls)
+                    if "pass" in collections:
+                        if collections["pass"]:
+                            pass_count += 1
+                        else:
+                            fail_count += 1
+                    # Fallback: calculate from score (existing calls)
+                    elif "score" in collections:
+                        score = collections["score"]
+                        if score >= threshold:
+                            pass_count += 1
+                        else:
+                            fail_count += 1
+
+        total_count = pass_count + fail_count
+        logger.info(f"Collections summary: {pass_count} passes, {fail_count} fails out of {total_count} total")
+
+        return {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "total_count": total_count,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching collections scorecard summary: {e}", exc_info=True)
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+
+def _calculate_scorecard_delta(current_summary: Dict[str, int], period: str, scorecard_type: str, user_id: Optional[str], start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> float:
+    """
+    Calculate period-over-period delta for scorecard pass counts.
+
+    Args:
+        current_summary: Current period summary with pass_count, fail_count
+        period: Time period string (used to calculate previous period)
+        scorecard_type: Type of scorecard ('compliance', 'servicing', 'collections')
+        user_id: User ID for tenant filtering
+        start_date_str: Optional start date for custom periods
+        end_date_str: Optional end date for custom periods
+
+    Returns:
+        float: Delta percentage (negative = decline, positive = improvement)
+    """
+    if current_summary["total_count"] == 0:
+        return 0.0
+
+    try:
+        # Calculate previous period dates
+        current_start, current_end = get_period_dates(period, start_date_str, end_date_str)
+        period_length = (current_end - current_start).days
+
+        # Previous period is same length, ending where current starts
+        prev_end = current_start - timedelta(seconds=1)
+        prev_start = prev_end - timedelta(days=period_length)
+
+        # Format dates for previous period query
+        prev_start_str = prev_start.strftime("%Y-%m-%d")
+        prev_end_str = prev_end.strftime("%Y-%m-%d")
+
+        logger.info(f"Calculating delta: current period {current_start.date()} to {current_end.date()}, previous period {prev_start.date()} to {prev_end.date()}")
+
+        # Get previous period summary
+        if scorecard_type == 'compliance':
+            prev_summary = get_compliance_scorecard_summary(user_id, "custom", prev_start_str, prev_end_str)
+        elif scorecard_type == 'servicing':
+            prev_summary = get_servicing_scorecard_summary(user_id, "custom", prev_start_str, prev_end_str)
+        elif scorecard_type == 'collections':
+            prev_summary = get_collections_scorecard_summary(user_id, "custom", prev_start_str, prev_end_str)
+        else:
+            return 0.0
+
+        current_pass = current_summary["pass_count"]
+        prev_pass = prev_summary["pass_count"]
+
+        if prev_pass == 0:
+            # If no previous data, return 0 (no meaningful comparison)
+            return 0.0
+
+        # Calculate percentage change
+        delta = ((current_pass - prev_pass) / prev_pass) * 100
+
+        logger.info(f"{scorecard_type} delta: current {current_pass} vs previous {prev_pass} = {delta:.2f}%")
+
+        return round(delta, 2)
+    except Exception as e:
+        logger.error(f"Error calculating scorecard delta: {e}", exc_info=True)
+        return 0.0
 
