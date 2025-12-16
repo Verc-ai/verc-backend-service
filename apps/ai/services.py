@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any
 from openai import OpenAI
 from django.conf import settings
 from apps.core.services.supabase import get_supabase_client
+from apps.ai.constants import SCORECARD_THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +282,75 @@ class CallSummaryService:
             if field not in data:
                 raise ValueError(f"Missing required field: {field}")
 
+    def _calculate_sentiment_shift(self, transcript_sentiments: List[Dict[str, Any]]) -> str:
+        """
+        Calculate sentiment shift category by comparing first half vs last half of call.
+
+        Args:
+            transcript_sentiments: List of sentiment scores from transcript
+
+        Returns:
+            str: One of 7 categories: 'positive', 'neutral', 'negative',
+                 'negative_to_positive', 'neutral_to_positive',
+                 'neutral_to_negative', 'positive_to_negative'
+        """
+        if not transcript_sentiments or len(transcript_sentiments) == 0:
+            return "neutral"
+
+        # Helper function to classify sentiment score
+        def classify_sentiment(score: float) -> str:
+            if score >= 60:
+                return "positive"
+            elif score >= 40:
+                return "neutral"
+            else:
+                return "negative"
+
+        # Split sentiments into first and last halves
+        total_count = len(transcript_sentiments)
+        mid_point = total_count // 2
+
+        # Handle single sentiment case
+        if total_count == 1:
+            score = transcript_sentiments[0].get("sentiment_score", 50)
+            return classify_sentiment(score)
+
+        # Calculate average for first half
+        first_half = transcript_sentiments[:mid_point] if mid_point > 0 else transcript_sentiments[:1]
+        first_half_scores = [s.get("sentiment_score", 50) for s in first_half]
+        first_half_avg = sum(first_half_scores) / len(first_half_scores) if first_half_scores else 50
+
+        # Calculate average for last half
+        last_half = transcript_sentiments[mid_point:]
+        last_half_scores = [s.get("sentiment_score", 50) for s in last_half]
+        last_half_avg = sum(last_half_scores) / len(last_half_scores) if last_half_scores else 50
+
+        # Classify each half
+        first_sentiment = classify_sentiment(first_half_avg)
+        last_sentiment = classify_sentiment(last_half_avg)
+
+        # Determine shift category
+        if first_sentiment == last_sentiment:
+            # No shift - return overall sentiment
+            return first_sentiment
+        else:
+            # Shift detected - return shift category
+            return f"{first_sentiment}_to_{last_sentiment}"
+
+    def _calculate_pass_fail_status(self, category: str, score: float) -> bool:
+        """
+        Determine if a scorecard category passes or fails based on threshold.
+
+        Args:
+            category: Category name ('compliance', 'servicing', 'collections')
+            score: The score for this category (0-100)
+
+        Returns:
+            bool: True if pass (score >= threshold), False if fail
+        """
+        threshold = SCORECARD_THRESHOLDS.get(category, 70)
+        return score >= threshold
+
     def _transform_scorecard_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """Transform OpenAI response to match expected scorecard structure."""
         agent_score = raw_data.get("agent_score", {})
@@ -291,8 +361,10 @@ class CallSummaryService:
         # Compliance
         compliance = agent_score.get("compliance", {})
         if compliance:
+            compliance_score = compliance.get("overall_score", 0.0)
             categories["compliance"] = {
-                "score": compliance.get("overall_score", 0.0),
+                "score": compliance_score,
+                "pass": self._calculate_pass_fail_status("compliance", compliance_score),
                 "feedback": "Compliance evaluation completed",
                 "issues": [],
             }
@@ -300,8 +372,10 @@ class CallSummaryService:
         # Servicing
         servicing = agent_score.get("servicing", {})
         if servicing:
+            servicing_score = servicing.get("overall_score", 0.0)
             categories["servicing"] = {
-                "score": servicing.get("overall_score", 0.0),
+                "score": servicing_score,
+                "pass": self._calculate_pass_fail_status("servicing", servicing_score),
                 "feedback": "Servicing evaluation completed",
                 "issues": [],
             }
@@ -309,20 +383,27 @@ class CallSummaryService:
         # Collections
         collections = agent_score.get("collections", {})
         if collections and collections.get("overall_score") is not None:
+            collections_score = collections.get("overall_score", 0.0)
             categories["collections"] = {
-                "score": collections.get("overall_score", 0.0),
+                "score": collections_score,
+                "pass": self._calculate_pass_fail_status("collections", collections_score),
                 "feedback": "Collections evaluation completed",
                 "issues": [],
             }
 
+        # Calculate sentiment shift category
+        transcript_sentiments = raw_data.get("transcript_sentiments", [])
+        sentiment_shift_category = self._calculate_sentiment_shift(transcript_sentiments)
+
         # Build final structure
         transformed = {
             "categories": categories,
-            "transcript_sentiments": raw_data.get("transcript_sentiments", []),
+            "transcript_sentiments": transcript_sentiments,
             "detected_intents": raw_data.get("detected_intents", []),
             "flagged_keywords": raw_data.get("flagged_keywords", []),
             "legal_issues_detected": raw_data.get("legal_issues_detected", False),
             "agent_score": agent_score,  # Keep original for detailed view
+            "sentiment_shift_category": sentiment_shift_category,
         }
 
         return transformed

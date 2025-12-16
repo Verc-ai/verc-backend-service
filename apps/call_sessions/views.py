@@ -74,7 +74,11 @@ class SessionListView(APIView):
             sort_order = request.query_params.get("sortOrder", "desc")
 
             # Build query
-            query = supabase.table("transcription_sessions").select("*", count="exact")
+            query = (
+                supabase.table("transcription_sessions")
+                .select("*", count="exact")
+                .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            )
 
             # Apply filters
             status_filter = request.query_params.get("status")
