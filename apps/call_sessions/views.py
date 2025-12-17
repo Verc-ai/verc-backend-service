@@ -216,43 +216,44 @@ class SessionListView(APIView):
                     session_status = "transcribed"
                 # else: keep as "created" or whatever was in database
 
-                # Get duration from metadata (where simulator stores it), not calculated
+                # Get duration from call_duration column (stored in seconds)
                 metadata = row.get("metadata", {})
                 if not isinstance(metadata, dict):
                     metadata = {}
 
-                duration = metadata.get("duration")
-                if duration is not None:
-                    # Convert from milliseconds to seconds (metadata stores in ms)
-                    duration = int(duration / 1000)
-                else:
-                    # Fallback: Calculate from timestamps (returns seconds)
-                    duration = calculate_session_duration(
-                        row.get("created_at"), row.get("last_event_received_at")
-                    )
+                # Use call_duration column directly, convert to minutes for display
+                duration_seconds = row.get("call_duration")
+                duration = None
+                if duration_seconds is not None:
+                    duration = int(duration_seconds / 60)  # Convert to minutes
 
-                # Get caller number
-                caller_number = row.get("caller_number")
+                # Get caller info from caller_info column (new schema)
+                caller_number = row.get("caller_info")
                 if not caller_number and metadata:
                     caller_number = metadata.get("caller_number") or metadata.get(
                         "from"
                     )
 
-                # Get overall score from scorecard data
+                # Get destination number from destination_number column (new schema)
+                destination_number = row.get("destination_number")
+
+                # Get overall score from call_scorecard (new schema, was call_scorecard_data)
                 overall_score = None
-                if row.get("call_scorecard_data") and isinstance(
-                    row.get("call_scorecard_data"), dict
+                if row.get("call_scorecard") and isinstance(
+                    row.get("call_scorecard"), dict
                 ):
-                    overall_score = row["call_scorecard_data"].get(
+                    overall_score = row["call_scorecard"].get(
                         "overall_weighted_score"
                     )
 
                 session = {
                     "id": row.get("id"),
-                    "created_at": row.get("created_at"),
-                    "last_event_received_at": row.get("last_event_received_at"),
-                    "duration": duration,
-                    "caller_number": caller_number,
+                    "filename": row.get("filename"),  # Display filename instead of UUID
+                    "created_at": row.get("call_start_time") or row.get("created_at"),  # Use call_start_time (new schema)
+                    "last_event_received_at": row.get("call_end_time"),  # Use call_end_time for consistency
+                    "duration": duration,  # Already in minutes
+                    "caller_number": caller_number,  # From caller_info column
+                    "destination_number": destination_number,  # From destination_number column
                     "call_status": session_status,  # Legacy field
                     "status": session_status,
                     "turn_count": turn_count,
@@ -263,7 +264,7 @@ class SessionListView(APIView):
                     "call_scorecard_status": row.get(
                         "call_scorecard_status", "not_started"
                     ),
-                    "overall_weighted_score": overall_score,
+                    "overall_weighted_score": overall_score,  # From call_scorecard.overall_weighted_score
                 }
                 sessions.append(session)
 
