@@ -440,7 +440,7 @@ class SessionDetailView(APIView):
                 "call_summary_status": session_data.get(
                     "call_summary_status", "not_started"
                 ),
-                "call_summary_data": session_data.get("call_summary_data"),
+                "call_summary_data": session_data.get("call_summary"),  # Read from 'call_summary' column
                 "call_summary_error": session_data.get("call_summary_error"),
                 "call_summary_generated_at": session_data.get(
                     "call_summary_generated_at"
@@ -449,7 +449,7 @@ class SessionDetailView(APIView):
                 "call_scorecard_status": session_data.get(
                     "call_scorecard_status", "not_started"
                 ),
-                "call_scorecard_data": session_data.get("call_scorecard_data"),
+                "call_scorecard_data": session_data.get("call_scorecard"),  # Read from 'call_scorecard' column
                 "call_scorecard_error": session_data.get("call_scorecard_error"),
                 "call_scorecard_generated_at": session_data.get(
                     "call_scorecard_generated_at"
@@ -494,13 +494,47 @@ class GenerateSummaryView(APIView):
     POST /api/sessions/{id}/generate-summary
     Generate AI summary for a call session.
     """
+    permission_classes = [AllowAny]
 
     def post(self, request, session_id):
-        # TODO: Implement AI summary generation
-        return Response(
-            {"message": "Summary generation started (mock)", "sessionId": session_id},
-            status=status.HTTP_200_OK,
-        )
+        try:
+            from apps.ai.services import CallSummaryService
+            from apps.core.services.supabase import get_supabase_client
+            from apps.core.utils import format_timestamp
+
+            # Initialize AI service
+            ai_service = CallSummaryService()
+
+            # Generate summary
+            summary_data = ai_service.generate_summary(session_id)
+
+            # Update database with success state
+            supabase = get_supabase_client()
+            if supabase:
+                config = settings.APP_SETTINGS.supabase
+                now = format_timestamp()
+                try:
+                    supabase.table(config.sessions_table).update({
+                        'call_summary_status': 'completed',
+                        'call_summary': summary_data,
+                        'call_summary_generated_at': now,
+                        'call_summary_error': None,  # Clear any cached error
+                    }).eq('id', session_id).execute()
+                    logger.info(f"✅ Updated database with successful summary for session {session_id}")
+                except Exception as db_error:
+                    logger.error(f"Failed to update database for session {session_id}: {db_error}", exc_info=True)
+                    # Continue and return the summary even if DB update fails
+
+            return Response(
+                {"success": True, "summary": summary_data, "sessionId": session_id},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate summary for {session_id}: {e}", exc_info=True)
+            return Response(
+                {"success": False, "error": str(e), "sessionId": session_id},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class GenerateScorecardView(APIView):
@@ -508,10 +542,44 @@ class GenerateScorecardView(APIView):
     POST /api/sessions/{id}/generate-scorecard
     Generate AI scorecard for a call session.
     """
+    permission_classes = [AllowAny]
 
     def post(self, request, session_id):
-        # TODO: Implement AI scorecard generation
-        return Response(
-            {"message": "Scorecard generation started (mock)", "sessionId": session_id},
-            status=status.HTTP_200_OK,
-        )
+        try:
+            from apps.ai.services import CallSummaryService
+            from apps.core.services.supabase import get_supabase_client
+            from apps.core.utils import format_timestamp
+
+            # Initialize AI service
+            ai_service = CallSummaryService()
+
+            # Generate scorecard
+            scorecard_data = ai_service.generate_scorecard(session_id)
+
+            # Update database with success state
+            supabase = get_supabase_client()
+            if supabase:
+                config = settings.APP_SETTINGS.supabase
+                now = format_timestamp()
+                try:
+                    supabase.table(config.sessions_table).update({
+                        'call_scorecard_status': 'completed',
+                        'call_scorecard': scorecard_data,
+                        'call_scorecard_generated_at': now,
+                        'call_scorecard_error': None,  # Clear any cached error
+                    }).eq('id', session_id).execute()
+                    logger.info(f"✅ Updated database with successful scorecard for session {session_id}")
+                except Exception as db_error:
+                    logger.error(f"Failed to update database for session {session_id}: {db_error}", exc_info=True)
+                    # Continue and return the scorecard even if DB update fails
+
+            return Response(
+                {"success": True, "scorecard": scorecard_data, "sessionId": session_id},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate scorecard for {session_id}: {e}", exc_info=True)
+            return Response(
+                {"success": False, "error": str(e), "sessionId": session_id},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

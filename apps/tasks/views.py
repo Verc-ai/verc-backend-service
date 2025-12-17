@@ -74,8 +74,6 @@ class TranscribeAudioView(APIView):
                 now = format_timestamp()
                 result = supabase.table(table_name).update({
                     'status': 'transcribing',
-                    'transcription_started_at': now,
-                    'last_event_received_at': now
                 }).eq('id', session_id).execute()
                 
                 print(f'[TASK] ✅ Updated session {session_id} status to transcribing. Result: {result}', file=sys.stderr, flush=True)
@@ -410,8 +408,6 @@ class TranscribeAudioView(APIView):
             
             result = supabase.table(table_name).update({
                 'status': 'transcribed',
-                'transcription_completed_at': now,
-                'last_event_received_at': now,
                 'metadata': updated_metadata
             }).eq('id', session_id).execute()
             
@@ -468,7 +464,6 @@ class TranscribeAudioView(APIView):
                     table_name = config.sessions_table
                     supabase.table(table_name).update({
                         'status': 'failed',  # Use 'failed' instead of 'error' to match database constraint
-                        'last_event_received_at': format_timestamp()
                     }).eq('id', session_id).execute()
                     logger.info(f'Updated session {session_id} status to failed')
                 except Exception as update_error:
@@ -539,12 +534,9 @@ class GenerateAIAnalysisView(APIView):
             print(f'[AI_TASK] Updating session {session_id} AI analysis status to in_progress', file=sys.stderr, flush=True)
             
             # Update both summary and scorecard status to in_progress
-            now = format_timestamp()
             result = supabase.table(table_name).update({
                 'call_summary_status': 'in_progress',
-                'call_scorecard_status': 'in_progress',
-                'analysis_started_at': now,
-                'last_event_received_at': now
+                'call_scorecard_status': 'in_progress'
             }).eq('id', session_id).execute()
             
             print(f'[AI_TASK] ✅ Updated session {session_id} AI analysis status to in_progress. Result: {result}', file=sys.stderr, flush=True)
@@ -587,17 +579,15 @@ class GenerateAIAnalysisView(APIView):
                         'call_scorecard_status': 'completed',
                         'call_summary_generated_at': now,
                         'call_scorecard_generated_at': now,
-                        'analysis_completed_at': now,
-                        'call_summary_data': {
+                        'call_summary': {
                             'summary': 'Mock summary - AI service not configured',
                             'key_points': ['Point 1', 'Point 2'],
                             'action_items': []
                         },
-                        'call_scorecard_data': {
+                        'call_scorecard': {
                             'overall_weighted_score': 85.0,
                             'categories': {}
-                        },
-                        'last_event_received_at': format_timestamp()
+                        }
                     }).eq('id', session_id).execute()
                     
                     print(f'[AI_TASK] ✅ Mock AI analysis completed for session {session_id}. Result: {result}', file=sys.stderr, flush=True)
@@ -628,7 +618,6 @@ class GenerateAIAnalysisView(APIView):
                     supabase.table(table_name).update({
                         'call_summary_status': 'failed',
                         'call_summary_error': summary_error,
-                        'last_event_received_at': format_timestamp()
                     }).eq('id', session_id).execute()
                 
                 # Generate scorecard
@@ -645,39 +634,32 @@ class GenerateAIAnalysisView(APIView):
                     supabase.table(table_name).update({
                         'call_scorecard_status': 'failed',
                         'call_scorecard_error': scorecard_error,
-                        'last_event_received_at': format_timestamp()
                     }).eq('id', session_id).execute()
                 
                 # Update session with results
                 config = settings.APP_SETTINGS.supabase
                 table_name = config.sessions_table
                 
-                update_data = {
-                    'last_event_received_at': format_timestamp()
-                }
-                
+                update_data = {}
+
                 # Update summary status and data if available
                 now = format_timestamp()
                 if summary_data:
                     update_data['call_summary_status'] = 'completed'
-                    update_data['call_summary_data'] = summary_data
+                    update_data['call_summary'] = summary_data
                     update_data['call_summary_generated_at'] = now
                 elif summary_error:
                     update_data['call_summary_status'] = 'failed'
                     update_data['call_summary_error'] = summary_error
-                
+
                 # Update scorecard status and data if available
                 if scorecard_data:
                     update_data['call_scorecard_status'] = 'completed'
-                    update_data['call_scorecard_data'] = scorecard_data
+                    update_data['call_scorecard'] = scorecard_data
                     update_data['call_scorecard_generated_at'] = now
                 elif scorecard_error:
                     update_data['call_scorecard_status'] = 'failed'
                     update_data['call_scorecard_error'] = scorecard_error
-                
-                # Set analysis_completed_at when both are done (or failed)
-                if (summary_data or summary_error) and (scorecard_data or scorecard_error):
-                    update_data['analysis_completed_at'] = now
                 
                 # Only update if we have at least one result
                 if summary_data or scorecard_data or summary_error or scorecard_error:
@@ -700,7 +682,6 @@ class GenerateAIAnalysisView(APIView):
                             'call_scorecard_status': 'failed',
                             'call_summary_error': str(e),
                             'call_scorecard_error': str(e),
-                            'last_event_received_at': format_timestamp()
                         }).eq('id', session_id).execute()
                     except Exception as update_error:
                         logger.error(f'Failed to update error status: {update_error}', exc_info=True)
@@ -1036,7 +1017,6 @@ class CleanupSpyCallView(APIView):
                 # Update session status to indicate no recording
                 supabase.table(sessions_table).update({
                     'status': 'completed',
-                    'last_event_received_at': format_timestamp()
                 }).eq('id', session_id).execute()
 
                 return Response({
@@ -1108,7 +1088,6 @@ class CleanupSpyCallView(APIView):
                 'recording_sid': recording_sid,
                 'audio_storage_path': storage_path,
                 'status': 'transcribing',
-                'last_event_received_at': format_timestamp()
             }).eq('id', session_id).execute()
 
             # Step 7: Enqueue transcription task (chain to existing pipeline)
