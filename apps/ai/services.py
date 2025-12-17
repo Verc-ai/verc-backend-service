@@ -27,7 +27,7 @@ class CallSummaryService:
             raise ValueError("OpenAI API key not configured")
 
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.model = "gpt-4o"
+        self.model = "gpt-5.2"
         self.temperature = 0.3
 
         # Load system prompts from files
@@ -81,8 +81,7 @@ class CallSummaryService:
                     {"role": "system", "content": self._summary_system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=self._calculate_max_tokens(word_count),
-                temperature=self.temperature,
+                max_completion_tokens=self._calculate_max_tokens(word_count),
                 response_format={"type": "json_object"},
             )
 
@@ -134,8 +133,7 @@ class CallSummaryService:
                     {"role": "system", "content": self._scorecard_system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=self._calculate_scorecard_max_tokens(len(transcripts)),
-                temperature=self.temperature,
+                max_completion_tokens=self._calculate_scorecard_max_tokens(len(transcripts)),
                 response_format={"type": "json_object"},
             )
 

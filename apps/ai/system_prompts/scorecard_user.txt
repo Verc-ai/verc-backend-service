@@ -1,175 +1,634 @@
-You are evaluating the quality and compliance of a customer service call for Buffalo Acceptance Corporation.
+Analyze the provided customer service call transcript and generate a comprehensive quality assurance, servicing, collections, and compliance evaluation for Buffalo Acceptance Corporation.
 
-**IMPORTANT: UNDERSTANDING PII REDACTION IN TRANSCRIPTS**
-The transcript below may contain redacted personally identifiable information (PII) shown in square brackets like [PERSON_NAME], [COMPANY_NAME], [ADDRESS], etc.
-These redaction tags indicate that sensitive information WAS PRESENT in the original conversation but has been masked for privacy.
-When evaluating compliance and agent performance:
-- [PERSON_NAME] means the agent DID use the customer's actual name
-- Multiple [PERSON_NAME] instances confirm identification by first and last name
-- Treat redaction tags as PROOF that the action was performed correctly
-- Score based on the presence of these tags, not their absence
+CRITICAL REQUIREMENTS (NON-NEGOTIABLE)
+1. Return ONLY valid JSON — no markdown, no code blocks, no explanatory text.
+2. The JSON structure MUST exactly match the FINAL OUTPUT FORMAT below.
+3. Do NOT add, remove, rename, or reorder any keys.
+4. All required arrays MUST be populated.
+5. Every question listed MUST be answered.
+6. SCORING RULES (IMPORTANT - DIFFERENT BY CATEGORY):
+   - COMPLIANCE questions: Binary scoring only
+     * answer = true, score = 10 (if behavior is explicitly present and satisfied)
+     * answer = false, score = 0 (if behavior is NOT present or NOT satisfied)
+     * answer = null, score = null (if question is NOT APPLICABLE or CANNOT BE INFERRED)
+   - SERVICING questions: Use 0-10 grading scale (NOT binary)
+     * score = integer from 0-10 based on strict grading scale (see SERVICING section)
+     * answer = true if score ≥ 7, answer = false if score < 7
+     * answer = null, score = null (if question is NOT APPLICABLE or CANNOT BE INFERRED)
+   - COLLECTIONS questions: Binary scoring only (hierarchical system)
+     * answer = true/false, score = 0, 50, or 100 (see COLLECTIONS section)
+     * answer = null, score = null (if question is NOT APPLICABLE)
+7. Use null/N/A when:
+   - The question is conditional and the condition is not met (e.g., "if applicable", "if POE call", "if no third party")
+   - The question cannot be determined from the transcript (e.g., documentation accuracy, internal processes not visible)
+   - The situation described in the question did not occur and cannot be evaluated
+8. Never invent facts or infer intent.
+9. If uncertain whether behavior occurred, use false/0 (not null) for compliance, or lower scores (0-5) for servicing.
+10. All scores must be integers or null (null for N/A questions).
+11. Overall scores must follow the formulas exactly (N/A questions are excluded from calculations).
+12. Do NOT default any question to true or high scores.
+13. If the same behavior appears in multiple questions, answers MUST be consistent.
 
-EVALUATION CRITERIA:
+PII REDACTION INTERPRETATION (MANDATORY)
+The transcript may contain redacted PII in either format:
+- Square brackets: [PERSON_NAME], [ADDRESS], [COMPANY_NAME], [DATE_TIME], [LOCATION]
+- Angle brackets: <PERSON>, <ADDRESS>, <COMPANY_NAME>, <DATE_TIME>, <LOCATION>
 
-1. **Per-Transcript Sentiment Analysis**: Analyze sentiment for EACH transcript utterance
-   - For every transcript ID provided, assign a sentiment score (0-100)
-   - 0 = very negative, 50 = neutral, 100 = very positive
-   - Analyze both customer AND agent sentiment
-   - Return array of {{transcript_id, sentiment_score}} objects
+Rules:
+- [PERSON_NAME] or <PERSON> means the customer WAS identified.
+- Multiple [PERSON_NAME] or <PERSON> entries indicate first AND last name.
+- [ADDRESS] or <ADDRESS> or similar indicates verification WAS completed.
+- [DATE_TIME] or <DATE_TIME> indicates date/time information was present.
+- [LOCATION] or <LOCATION> indicates location information was present.
+Never penalize due to redaction. Both formats are equivalent proof that the information was present.
 
-2. **Detected Intents**: Identify ALL applicable call intents from this list:
-   - Make Payment
-   - Due Date Change
-   - Collections
-   - Update Account Information
-   - Complaint
-   - Billing Inquiry
-   - General Inquiry
+ANALYSIS REQUIREMENTS
 
-3. **Flagged Keywords Detection**:
-   Check if ANY of these keywords were mentioned in the conversation:
-   - legal
-   - attorney general
-   - better business bureau
-   - BBB
-   - CFPB
-   - repossession
+TRANSCRIPT SENTIMENTS
+For EACH transcript ID in the input:
+- sentiment_score ∈ [0,100]
+- 0 = very negative, 50 = neutral, 100 = very positive
+- Evaluate overall sentiment of that utterance
 
-   Return array of detected keywords (empty array if none found).
+DETECTED INTENTS
+Return ALL applicable intents from:
+- Make Payment
+- Due Date Change
+- Collections
+- Update Account Information
+- Complaint
+- Billing Inquiry
+- General Inquiry
 
-4. **Agent Performance Scoring**: Evaluate across four categories
+If none clearly apply, return ["General Inquiry"].
 
-   ============================================
-   COMPLIANCE SCORE (4 questions, each 0-10)
-   ============================================
+FLAGGED KEYWORDS
+Detect mentions (case-insensitive):
+- legal, attorney, lawyer, lawsuit, sue
+- attorney general
+- better business bureau, BBB
+- CFPB, Consumer Financial Protection Bureau
+- repossession, repo
 
-   **IMPORTANT: PII REDACTION RECOGNITION**
-   The transcript may contain redacted personally identifiable information (PII) in the format [PERSON_NAME], [COMPANY_NAME], [ADDRESS], etc.
-   - If you see [PERSON_NAME] in the transcript, this means the agent DID use the customer's actual name
-   - If you see multiple instances of [PERSON_NAME], this confirms identification by first and last name
-   - Redaction tags are PROOF that the information was present in the original conversation
-   - Score accordingly: presence of redaction = the agent DID perform that action
+Return detected keywords as array, or [].
 
-   1. Did the account manager identify the customer by their first and last name? (0-10)
-   2. Did the account manager identify themself? (0-10)
-   3. Did the account manager identify the company name (Buffalo Acceptance Corporation)? (0-10)
-   4. Did the account manager complete the verification process? (0-10)
+==========================
+COMPLIANCE SCORE
+==========================
+Evaluate THIRTY-SEVEN questions. Each question:
+- answer = true, score = 10 if explicitly satisfied
+- answer = false, score = 0 if not satisfied or not present
+- answer = null, score = null if NOT APPLICABLE or CANNOT BE INFERRED
+- Questions marked as "if applicable", "if no X", or conditional scenarios should use null when condition is not met
+- N/A questions are EXCLUDED from score calculations
 
-   **Scoring Guide for each question:**
-   - 10: Fully completed, clear and professional
-   - 7-9: Mostly completed with minor issues
-   - 4-6: Partially completed or unclear
-   - 1-3: Attempted but poorly executed
-   - 0: Not done at all
+Questions:
 
-   **Overall Score Calculation:** (sum of all 4 question scores / 40) × 100
+1. "Did the account manager identify themself?"
+   - Agent must state their own name
+   - Score: 10 if true, 0 if false
 
-   ============================================
-   SERVICING SCORE (7 questions, each 0-10)
-   ============================================
+2. "Did the account manager identify the customer by their first and last name?"
+   - Agent must use the customer's name during the call to identify them
+   - Look for agent using customer's name: [PERSON_NAME] or <PERSON> tags when agent speaks
+   - Examples: "Hi [PERSON_NAME]", "Miss <PERSON>", "[PERSON_NAME], can you verify...", "Hey <PERSON>"
+   - If agent uses customer's name at least once, this indicates identification occurred
+   - Multiple [PERSON_NAME] or <PERSON> instances by agent = stronger evidence of identification
+   - Score: 10 if agent used customer's name at least once, 0 if never used
 
-   1. Did the account manager acknowledge and address the customer's issue and provide solutions? (0-10)
-   2. Did the account manager answer the call in an upbeat, outgoing, professional manner? (0-10)
-   3. Did the account manager express empathy and understanding towards the customer's situation? (0-10)
-   4. Was it clear and easy to understand what the account manager is communicating? (0-10)
-   5. Did the account manager actively listen to the customer's concerns and demonstrate understanding? (0-10)
-   6. Did the account manager maintain a courteous and professional tone throughout the call? (0-10)
-   7. Did the account manager appear to be knowledgeable about the loan balance, amount due, past due or payment required? (0-10)
+3. "Did the account manager identify the company name?"
+   - Agent must state the company name during the call
+   - Acceptable variations: "Buffalo Acceptance Corporation", "Buffalo Hot Acceptance", "Buffalo Acceptance", or any clear mention of the company name
+   - Look for phrases like: "Thank you for calling [company name]", "This is [company name]", "calling from [company name]"
+   - Score: 10 if company name is mentioned, 0 if false
 
-   **Scoring Guide for each question (STRICT/HARSH GRADING):**
-   - 10: Exceptional - Exceeded expectations with outstanding professionalism and effectiveness
-   - 8-9: Excellent - Fully met all criteria with clear professionalism
-   - 6-7: Good - Met most criteria but had minor issues or could improve
-   - 4-5: Adequate - Met some criteria but had noticeable gaps or issues
-   - 2-3: Poor - Attempted but significant deficiencies or unprofessional
-   - 0-1: Unacceptable - Not done or completely inadequate
+4. "Did the account manager complete the verification process?"
+   - Look for address verification, DOB, or other verification steps
+   - [ADDRESS] or <ADDRESS> or [DATE_TIME] or <DATE_TIME> tags indicate verification occurred
+   - Score: 10 if true, 0 if false
 
-   **IMPORTANT:** Be strict and critical. Reserve 10s for truly exceptional performance. Most good calls should score 6-8.
+5. "Did the associate read all applicable disclosures verbatim in accordance to established client requirements?"
+   - Must read required disclosures word-for-word as specified
+   - Look for standard disclosure language or compliance statements
+   - Score: 10 if true, 0 if false
 
-   **Overall Score Calculation:** (sum of all 7 question scores / 70) × 100
+6. "Did the associate follow documented policy requirements?"
+   - Must follow all documented company policies and procedures
+   - Look for adherence to established policy guidelines
+   - Score: 10 if true, 0 if false
 
-   ============================================
-   COLLECTIONS SCORE (4 weighted questions)
-   ============================================
+7. "Did the associate adhere to regulatory compliance requirements?"
+   - Must comply with all applicable regulatory requirements
+   - Look for adherence to industry regulations and standards
+   - Score: 10 if true, 0 if false
 
-   **CRITICAL: Only evaluate this section if the call intent is "Collections".**
-   **If NOT Collections, set all answers to null, all scores to null, and overall_score to null.**
+8. "If the party was not properly verified/authenticated, did the employee refrain from sharing NPI? (Privacy Event)"
+    - If authentication failed or was incomplete, must not share Non-Public Information (NPI)
+    - Look for protection of sensitive information when verification is insufficient
+    - Score: 10 if true (no NPI shared when unverified), 0 if false (NPI shared when unverified)
+    - If party was properly verified: answer = null, score = null (question not applicable)
 
-   If Collections intent detected:
+9. "Did agent ensure not to antagonize, belittle, humiliate, disrespect, or otherwise mistreat the customer?"
+    - Must maintain respectful, professional communication
+    - No antagonizing, belittling, humiliating, or disrespectful behavior
+    - Score: 10 if true, 0 if false
 
-   1. Was a payment taken?
-      - Answer: true/false
-      - Score: 20 if true, 0 if false
+10. "Did agent ensure not to demonstrate unfair or deceptive practices?"
+    - Must avoid any unfair or deceptive practices
+    - No misleading statements or unfair treatment
+    - Score: 10 if true, 0 if false
 
-   2. Was a promise to pay set?
-      - Answer: true/false
-      - Score: 10 if true, 0 if false
+11. "Did the associate state the Monitored/Recorded Line disclosure?"
+    - Must state that the call is being monitored or recorded
+    - Look for disclosure statement about call monitoring/recording
+    - Score: 10 if true, 0 if false
 
-   3. Was a deferment given?
-      - Answer: true/false
-      - Score: 10 if true, 0 if false
+12. "Did the associate follow customer appropriate authentication procedures, including first and last name AND suffix if applicable?"
+    - Must authenticate customer using first name, last name, and suffix if applicable
+    - Look for complete authentication including suffix when needed
+    - Score: 10 if true, 0 if false
 
-   4. Was a tag given?
-      - Answer: true/false
-      - Score: 10 if true, 0 if false
+13. "Did the associate follow third party procedures, if applicable?"
+    - If speaking with third party, must follow established third party procedures
+    - Look for proper handling of third party situations
+    - Score: 10 if true, 0 if false
+    - If no third party involved: answer = null, score = null (question not applicable)
 
-   **Overall Score Calculation:** (sum of all points / 50) × 100
-   **Maximum possible: 50 points = 100%**
+14. "Did the associate properly brand the call?"
+    - Must properly identify the company/brand during the call
+    - Look for proper branding statements
+    - Score: 10 if true, 0 if false
 
-   ============================================
-   LEGAL ISSUES DETECTION (Boolean Flag)
-   ============================================
+15. "Did the associate read the Debt Collection Disclosure (Mini Miranda) or follow Voicemail Message requirements?"
+    - Must read Mini Miranda disclosure or follow voicemail requirements
+    - Look for required debt collection disclosure language
+    - Score: 10 if true, 0 if false
 
-   Determine if ANY legal threats or legal action were mentioned during the conversation by either party:
-   - Did the customer threaten legal action?
-   - Did the account manager threaten legal action?
+16. "If the call is to a POE (Place of Employment), does the collector avoid communication directly with the employer?"
+    - If calling place of employment, must not communicate directly with employer
+    - Must respect workplace communication restrictions
+    - Score: 10 if true, 0 if false
+    - If not a POE call: answer = null, score = null (question not applicable)
 
-   Return: true if ANY legal threats were detected, false if no legal threats were made
+17. "Did the associate follow cease and desist procedures, including a request for C&D in writing, if applicable?"
+    - If customer requests to cease contact, must follow C&D procedures
+    - Must request written C&D if applicable
+    - Score: 10 if true, 0 if false
+    - If no C&D request made: answer = null, score = null (question not applicable)
 
-TRANSCRIPT WITH IDS:
-{transcript_with_ids}
+18. "Did the associate follow proper Special Handling procedures such as: complaint tracking, bankruptcy notification or attorney representation, Fraud/Dispute, or ADA?"
+    - Must follow special handling for complaints, bankruptcy, attorney representation, fraud/disputes, or ADA accommodations
+    - Look for proper handling of special circumstances
+    - Score: 10 if true, 0 if false
+    - If no special handling circumstances present: answer = null, score = null (question not applicable)
 
-Return ONLY valid JSON matching this structure (no markdown, no code blocks):
+19. "Did the associate avoid soliciting a post-dated physical check?"
+    - Must not solicit post-dated physical checks
+    - Look for absence of post-dated check requests
+    - Score: 10 if true (no solicitation), 0 if false (solicited post-dated check)
+
+20. "If the debtor advised attorney representation, did the collector follow guidelines?"
+    - If customer has attorney representation, must follow proper procedures
+    - Must not contact customer directly if represented by attorney
+    - Score: 10 if true, 0 if false
+    - If no attorney representation mentioned: answer = null, score = null (question not applicable)
+
+21. "If applicable did the associate recap pay by phone arrangement requirements for either a One-Time Payment or Recurring Payments (NACHA)?"
+    - If pay-by-phone is set up, must recap requirements for one-time or recurring payments
+    - Must explain NACHA requirements if applicable
+    - Score: 10 if true, 0 if false
+    - If no pay-by-phone arrangement: answer = null, score = null (question not applicable)
+
+22. "Were payments applied correctly?"
+    - If payment was taken, must be applied correctly to account
+    - Look for accurate payment processing
+    - Score: 10 if true, 0 if false
+    - If no payment was taken: answer = null, score = null (question not applicable)
+
+23. "If applicable did the associate read the Income Disclosure verbatim?"
+    - If income disclosure is required, must read it word-for-word
+    - Look for verbatim reading of income disclosure
+    - Score: 10 if true, 0 if false
+    - If income disclosure not required/applicable: answer = null, score = null (question not applicable)
+
+24. "NYC only- did the collector request customer's language preference and document, unless previously documented?"
+    - For NYC calls, must request and document language preference
+    - Unless already documented, must ask for language preference
+    - Score: 10 if true, 0 if false
+    - If not an NYC call: answer = null, score = null (question not applicable)
+
+25. "Did the associate adhere to all state and federal laws (including but not limited to FDCPA, SCRA, ADA and TCPA)?"
+    - Must comply with FDCPA, SCRA, ADA, TCPA and all applicable laws
+    - Look for compliance with all relevant regulations
+    - Score: 10 if true, 0 if false
+
+26. "Did the associate accurately and completely document the account notes?"
+    - Must document all account interactions accurately and completely
+    - Look for thorough and accurate documentation
+    - Score: 10 if true, 0 if false
+
+27. "Did the agent identify the cardmember to the required standard? (ref sec 2. ID & V)"
+    - Must identify cardmember according to required identification standards
+    - Look for proper identification procedures
+    - Score: 10 if true, 0 if false
+
+28. "Did the agent ensure not to disclose or capture any inappropriate information? (ref sec 3. DATA PRIVACY)"
+    - Must protect data privacy and avoid inappropriate information disclosure
+    - Must not capture unnecessary or inappropriate data
+    - Score: 10 if true, 0 if false
+
+29. "Did the agent ensure not to harass, threaten or mislead the cardmember? (ref sec 4.1 REG/ UDAAP)"
+    - Must avoid UDAAP violations - no harassment, threats, or misleading statements
+    - Must comply with unfair, deceptive, or abusive acts or practices regulations
+    - Score: 10 if true, 0 if false
+
+30. "Did the agent correctly communicate all required disclosures? (ref sec 4.2 REG/ Disclosures)"
+    - Must communicate all regulatory disclosures correctly
+    - Look for proper disclosure communication
+    - Score: 10 if true, 0 if false
+
+31. "Did agent ensure to comply with communication in connection with debt? (ref. sec 4.3 REG/ Communication)"
+    - Must comply with all debt communication regulations
+    - Look for adherence to communication requirements
+    - Score: 10 if true, 0 if false
+
+32. "Did the agent follow all other regulatory requirements? (ref sec 4.4 REG/ OTHER)"
+    - Must follow all other regulatory requirements not specifically covered
+    - Look for compliance with additional regulations
+    - Score: 10 if true, 0 if false
+
+33. "Did agent follow procedures regarding agent-initiated termination of call? (ref sec 5 P&P)"
+    - If agent ends the call, must follow established termination procedures
+    - Look for proper call termination protocols
+    - Score: 10 if true, 0 if false
+    - If customer ended the call (not agent): answer = null, score = null (question not applicable)
+
+34. "Did the agent avoid behaviors which were considered to be a violation of the conduct / FDCPA standards? (ref sec. 4.5 Conduct and DEF #8 Conduct Standards)"
+    - Must avoid any conduct violations or FDCPA standard violations
+    - Look for adherence to conduct and FDCPA standards
+    - Score: 10 if true, 0 if false
+
+35. "Was there a complaint made by the cardmember or did they express dissatisfaction during the call?"
+    - Must identify if cardmember made complaint or expressed dissatisfaction
+    - Look for complaints or expressions of dissatisfaction
+    - Score: 10 if complaint/dissatisfaction was properly handled, 0 if not handled properly
+    - If no complaint or dissatisfaction expressed: answer = null, score = null (question not applicable - no complaint to evaluate)
+
+36. "Did the cardmember claim Fraud or dispute the account?"
+    - Must identify if cardmember claimed fraud or disputed the account
+    - Look for fraud claims or account disputes
+    - Score: 10 if fraud/dispute was properly handled, 0 if not handled properly
+    - If no fraud claim or dispute mentioned: answer = null, score = null (question not applicable - no fraud/dispute to evaluate)
+
+37. "Were there any compliance or conduct errors exhibited by the manager or 2v colleague during the call? (This will result in an additional zero being added to the overall agency score, but will not impact the agent)"
+    - Must identify if manager or 2v colleague made compliance/conduct errors
+    - Note: This affects agency score but not individual agent score
+    - Score: 10 if no errors, 0 if errors occurred
+    - If no manager or 2v colleague on call: answer = null, score = null (question not applicable)
+
+Overall Compliance Score Calculation:
+- Sum only questions with non-null scores (exclude N/A questions)
+- Count only questions with non-null scores to determine maximum possible points
+- Formula: (sum of non-null scores / (count of non-null questions × 10)) × 100
+- Example: If 35 questions answered (2 N/A), max = 350 points, sum = 300, score = (300/350) × 100 = 85.71
+- Round to 2 decimal places, then store as integer or float
+
+==========================
+SERVICING SCORE
+==========================
+Evaluate TWENTY-FIVE questions. Score each question from 0–10 using strict grading scale, or null if N/A.
+
+STRICT GRADING SCALE:
+- 10: Exceptional - Exceeded expectations, outstanding professionalism
+- 8-9: Excellent - Fully met all criteria with clear professionalism
+- 6-7: Good - Met most criteria but had minor issues
+- 4-5: Adequate - Met some criteria but had noticeable gaps
+- 2-3: Poor - Attempted but significant deficiencies
+- 0-1: Unacceptable - Not done or completely inadequate
+
+IMPORTANT: Be strict and critical. Reserve 10s for truly exceptional performance. Most good calls should score 6-8.
+
+Questions:
+
+1. "Did the account manager acknowledge and address the customer's issue and provide solutions?"
+   - Must acknowledge the issue and provide actionable solutions
+   - Score using strict 0–10 grading
+
+2. "Did the account manager answer the call in an upbeat, outgoing, professional manner?"
+   - Must demonstrate positive energy and professionalism from call start
+   - Score using strict 0–10 grading
+
+3. "Was it clear and easy to understand what the account manager is communicating?"
+   - Communication must be clear, concise, and understandable
+   - No confusion or ambiguity in messaging
+   - Score using strict 0–10 grading
+
+4. "Did the account manager actively listen to the customer's concerns and demonstrate understanding?"
+   - Must show active listening through responses, questions, or acknowledgments
+   - Must demonstrate understanding of customer concerns
+   - Score using strict 0–10 grading
+
+5. "Did the account manager appear to be knowledgeable about the loan balance, amount due, past due or payment required?"
+   - Must demonstrate knowledge of account details
+   - Must provide accurate information about balances and payments
+   - Score using strict 0–10 grading
+
+6. "Did the employee provide accurate and complete information to the caller to solve the issue at hand and prevent further escalation?"
+   - Information must be accurate, complete, and help resolve the issue
+   - Should prevent need for follow-up calls or escalations
+   - Score using strict 0–10 grading
+
+7. "Did the associate provide payment solutions that are affordable and appropriate given the cardmember's financial situation?"
+   - Payment solutions must be tailored to customer's financial capacity
+   - Solutions should be realistic and affordable for the customer
+   - Score using strict 0–10 grading
+
+8. "Did the associate complete all required steps to resolve client request and meet critical to process standards and/or transferred to correct Department?"
+   - Must complete all required process steps to resolve the request
+   - Must meet critical-to-process standards
+   - If transfer is needed, must transfer to correct department
+   - Score using strict 0–10 grading
+
+9. "Did the associate accurately resolve the client's issue(s)?"
+   - Must accurately address and resolve the client's issues
+   - Resolution must be correct and complete
+   - Score using strict 0–10 grading
+
+10. "Did the associate promote a positive experience?"
+    - Must create a positive, professional interaction
+    - Look for courteous, helpful, and customer-focused behavior
+    - Score using strict 0–10 grading
+
+11. "Did agent greet cardmember and properly identify themselves, (first and last name, and Company) Current Creditor and partner name?"
+    - Must greet cardmember and provide full identification: first name, last name, company, current creditor, and partner name
+    - Look for complete identification at call start
+    - Score using strict 0–10 grading
+
+12. "Did the agent state the purpose of the call and the current balance on the account?"
+    - Must clearly state the purpose of the call
+    - Must provide current account balance
+    - Score using strict 0–10 grading
+
+13. "Did the agent obtain or ask for the reason the cardmember is past due or is unable to pay the balance in full? (ref DEF 1 RFD)"
+    - Must understand why cardmember is past due or cannot pay in full
+    - Look for questions about reason for delinquency (RFD)
+    - Score using strict 0–10 grading
+
+14. "Did the agent obtain the current financial situation? (ref DEF 2 Financial)"
+    - Must assess cardmember's current financial situation
+    - Look for questions about income, expenses, or financial capacity
+    - Score using strict 0–10 grading
+
+15. "Did the agent follow the proper payment hierarchy prior to discussing payment solutions with the cardmember? (Ref DEF 2 Payment Hierarchy)"
+    - Must follow established payment hierarchy before discussing solutions
+    - Look for proper sequence of payment options discussed
+    - Score using strict 0–10 grading
+
+16. "If a Promise to Pay was set-up on the account, was the proper information obtained? (all required: Payment Method, Payment Amount, Promise information verified, Payment Date)"
+    - If promise to pay was established, must obtain all required information
+    - Required: Payment Method, Payment Amount, Promise information verified with cardmember, Payment Date
+    - Score: 10 if all required information obtained, 0 if any missing
+    - If no promise to pay was set up: answer = null, score = null (question not applicable)
+
+17. "If the cardmember does not have a checking account or refuses a check-by-phone, did the agent offer alternate avenues for re-payment? (ex: Debit Card Payment, Money Order, Western Union, regular mail, etc.)"
+    - If check-by-phone is not available, must offer alternative payment methods
+    - Alternatives include: Debit Card, Money Order, Western Union, regular mail, etc.
+    - Score: 10 if alternatives offered, 0 if not
+    - If check-by-phone was used or not discussed: answer = null, score = null (question not applicable)
+
+18. "Did the agent properly recap the conversation and set expectations for future contact prior to ending or transferring the call?"
+    - Must summarize the conversation clearly
+    - Must set clear expectations for future contact
+    - Score using strict 0–10 grading
+
+19. "Did the agent verify contact information?"
+    - Must verify cardmember's current contact information
+    - Look for confirmation of phone, email, or address
+    - Score using strict 0–10 grading
+
+20. "Did agent provide their call back information?"
+    - Must provide agent's callback information to cardmember
+    - Look for phone number, extension, or contact method provided
+    - Score using strict 0–10 grading
+
+21. "If the call was transferred or escalated, was it appropriate?"
+    - If call was transferred or escalated, must be appropriate and justified
+    - Look for proper transfer/escalation procedures followed
+    - Score: 10 if appropriate, 0 if not
+    - If no transfer or escalation occurred: answer = null, score = null (question not applicable)
+
+22. "Did the agent demonstrate a professional tone?"
+    - Must maintain professional tone throughout the call
+    - Look for courteous, respectful, and businesslike communication
+    - Score using strict 0–10 grading
+
+23. "Did the agent express empathy and/or acknowledge situation in a timely manner?"
+    - Must show empathy and acknowledge cardmember's situation promptly
+    - Must include explicit verbal empathy (e.g., acknowledgment of difficulty, understanding, apology where appropriate)
+    - Look for understanding and timely acknowledgment
+    - Score using strict 0–10 grading
+
+24. "Did the agent engage, actively listen and appropriately answer the cardmember questions/ concerns?"
+    - Must actively engage and listen to cardmember
+    - Must appropriately address all questions and concerns
+    - Score using strict 0–10 grading
+
+25. "Did the agent use appropriate verbiage? (ref DEF #6 Communication)"
+    - Must use appropriate language and terminology
+    - Must avoid inappropriate or unprofessional language
+    - Score using strict 0–10 grading
+
+Overall Servicing Score Calculation:
+- Sum only questions with non-null scores (exclude N/A questions)
+- Count only questions with non-null scores to determine maximum possible points
+- Formula: (sum of non-null scores / (count of non-null questions × 10)) × 100
+- Example: If 23 questions answered (2 N/A), max = 230 points, sum = 200, score = (200/230) × 100 = 86.96
+- Round to 2 decimal places, then store as integer or float
+
+==========================
+COLLECTIONS SCORE
+==========================
+⚠️ CRITICAL: Only evaluate this section if "Collections" intent is detected in detected_intents array.
+
+⚠️ HIERARCHICAL SCORING SYSTEM:
+- Evaluate questions in order (1 → 2 → 3)
+- If payment taken (Q1 = true): Score = 100, set Q2 and Q3 to null/N/A
+- If no payment (Q1 = false) AND promise to pay set (Q2 = true): Score = 50, set Q3 to null/N/A
+- If no payment (Q1 = false) AND no promise to pay (Q2 = false) AND deferment given (Q3 = true): Score = 50
+- If none of the above: Score = 0
+
+If Collections intent is NOT detected:
+- Still include all 3 questions in the collections.questions array
+- Set answer = false for all questions
+- Set score = 0 for all questions
+- Calculate overall_score using hierarchical scoring (all false = 0)
+
+If Collections intent IS detected:
+Evaluate each question with:
+- "question": exact question text as shown below
+- "answer": boolean (true/false) or null for skipped questions
+- "score": integer points as specified or null for skipped questions
+
+Questions to evaluate (HIERARCHICAL SCORING - evaluate in order):
+1. "Was a payment taken?" 
+   - If YES: Score = 100, skip remaining questions (set promise to pay and deferment to null/N/A)
+   - If NO: Continue to question 2
+   
+2. "Was a promise to pay set?"
+   - Only evaluate if payment was NOT taken
+   - If YES: Score = 50, skip deferment question (set to null/N/A)
+   - If NO: Continue to question 3
+   
+3. "Was a deferment given?"
+   - Only evaluate if payment was NOT taken AND promise to pay was NOT set
+   - If YES: Score = 50
+   - If NO: Score = 0
+
+Overall Collections Score Calculation (ALWAYS calculate if questions are evaluated):
+- Use hierarchical scoring:
+  - If payment taken: overall_score = 100
+  - Else if promise to pay set: overall_score = 50
+  - Else if deferment given: overall_score = 50
+  - Else (all false): overall_score = 0
+- Round to 2 decimal places
+- If questions cannot be evaluated at all (no transcript data): set to null
+
+==========================
+LEGAL ISSUES DETECTION
+==========================
+Set legal_issues_detected to true (boolean) if ANY of the following occurred:
+- Customer threatened legal action
+- Customer mentioned hiring an attorney/lawyer
+- Customer mentioned filing a lawsuit
+- Customer mentioned contacting attorney general, BBB, or CFPB
+- Agent threatened legal action
+- Any mention of legal proceedings or legal escalation
+
+Otherwise set to false.
+
+==========================
+FINAL OUTPUT FORMAT (LOCKED)
+==========================
+⚠️ EXAMPLE STRUCTURE BELOW - Scores shown are for STRUCTURE ONLY, not scoring guidance!
+You MUST evaluate each call independently and assign scores based on actual performance.
+
+You MUST return JSON that matches this structure EXACTLY:
 {{
+  "categories": {{
+    "compliance": {{
+      "score": 100.0,
+      "feedback": "Compliance evaluation completed",
+      "issues": []
+    }},
+    "servicing": {{
+      "score": 100.0,
+      "feedback": "Servicing evaluation completed",
+      "issues": []
+    }}
+  }},
   "transcript_sentiments": [
-    {{ "transcript_id": "uuid-1", "sentiment_score": 45 }},
-    {{ "transcript_id": "uuid-2", "sentiment_score": 50 }},
-    {{ "transcript_id": "uuid-3", "sentiment_score": 65 }}
+    {{
+      "transcript_id": "transcript-0",
+      "sentiment_score": 50
+    }},
+    {{
+      "transcript_id": "transcript-1",
+      "sentiment_score": 50
+    }}
   ],
-  "detected_intents": ["Collections", "Make Payment"],
-  "flagged_keywords": ["legal", "repossession"],
+  "detected_intents": ["Make Payment"],
+  "flagged_keywords": [],
+  "legal_issues_detected": false,
   "agent_score": {{
     "compliance": {{
       "questions": [
-        {{ "question": "Did the account manager identify the customer by their first and last name?", "answer": true, "score": 10 }},
-        {{ "question": "Did the account manager identify themself?", "answer": true, "score": 10 }},
-        {{ "question": "Did the account manager identify the company name?", "answer": true, "score": 9 }},
-        {{ "question": "Did the account manager complete the verification?", "answer": true, "score": 10 }}
+        {{
+          "question": "Did the account manager identify the customer by their first and last name?",
+          "answer": true,
+          "score": 10
+        }},
+        {{
+          "question": "Did the account manager identify themself?",
+          "answer": true,
+          "score": 10
+        }},
+        {{
+          "question": "Did the account manager identify the company name?",
+          "answer": true,
+          "score": 10
+        }},
+        {{
+          "question": "If the call is to a POE (Place of Employment), does the collector avoid communication directly with the employer?",
+          "answer": null,
+          "score": null
+        }}
       ],
-      "overall_score": 97.5
+      "overall_score": 100.0
     }},
     "servicing": {{
       "questions": [
-        {{ "question": "Did the account manager acknowledge and address the customer's issue and provide solutions?", "answer": true, "score": 7 }},
-        {{ "question": "Did the account manager answer the call in an upbeat, outgoing, professional manner?", "answer": true, "score": 6 }},
-        {{ "question": "Did the account manager express empathy and understanding towards the customer's situation?", "answer": true, "score": 8 }},
-        {{ "question": "Was it clear and easy to understand what the account manager is communicating?", "answer": true, "score": 7 }},
-        {{ "question": "Did the account manager actively listen to the customer's concerns and demonstrate understanding?", "answer": true, "score": 7 }},
-        {{ "question": "Did the account manager maintain a courteous and professional tone throughout the call?", "answer": true, "score": 8 }},
-        {{ "question": "Did the account manager appear to be knowledgeable about the loan balance, amount due, past due or payment required?", "answer": true, "score": 6 }}
+        {{
+          "question": "Did the account manager acknowledge and address the customer's issue and provide solutions?",
+          "answer": true,
+          "score": 10
+        }},
+        {{
+          "question": "Did the account manager answer the call in an upbeat, outgoing, professional manner?",
+          "answer": true,
+          "score": 10
+        }}
       ],
-      "overall_score": 70
+      "overall_score": 100.0
     }},
     "collections": {{
       "questions": [
-        {{ "question": "Was a payment taken?", "answer": true, "score": 20 }},
-        {{ "question": "Was a promise to pay set?", "answer": false, "score": 0 }},
-        {{ "question": "Was a deferment given?", "answer": false, "score": 0 }},
-        {{ "question": "Was a tag given?", "answer": true, "score": 10 }}
+        {{
+          "question": "Was a payment taken?",
+          "answer": false,
+          "score": 0
+        }},
+        {{
+          "question": "Was a promise to pay set?",
+          "answer": false,
+          "score": 0
+        }},
+        {{
+          "question": "Was a deferment given?",
+          "answer": false,
+          "score": 0
+        }}
       ],
-      "overall_score": 60
-    }}
+      "overall_score": 100.0
+    }},
+    "overall_score": 100.0
   }},
-  "legal_issues_detected": false
+  "overall_weighted_score": 100.0
 }}
 
+⚠️ CRITICAL NOTES:
+- All compliance questions MUST be included in agent_score.compliance.questions array
+- All servicing questions MUST be included in agent_score.servicing.questions array
+- All 3 collections questions MUST be included in agent_score.collections.questions array (even if Collections intent not detected)
+- Collections scoring is HIERARCHICAL: payment (100) > promise to pay (50) > deferment (50)
+- If payment taken, set promise to pay and deferment to null/N/A
+- If promise to pay set (and no payment), set deferment to null/N/A
+- For N/A questions: answer = null, score = null (NOT false/0)
+- N/A questions are EXCLUDED from score calculations (they don't count toward sum or max points)
+- categories.compliance.score MUST equal agent_score.compliance.overall_score
+- categories.servicing.score MUST equal agent_score.servicing.overall_score
+- agent_score.overall_score MUST be calculated using the weighted formula below
+- overall_weighted_score MUST equal agent_score.overall_score
+- categories.compliance.feedback and categories.servicing.feedback should be descriptive text about the evaluation
+- categories.compliance.issues and categories.servicing.issues should be arrays (empty [] if no issues, or list of issue descriptions if issues found)
+
+OVERALL WEIGHTED SCORE CALCULATION
+If Collections intent is NOT detected:
+- Formula: 0.17 × compliance_score + 0.83 × servicing_score
+- Round to 2 decimal places
+
+If Collections intent IS detected:
+- Formula: 0.10 × compliance_score + 0.50 × servicing_score + 0.40 × collections_score
+- Round to 2 decimal places
+
+INPUT
+{transcript_with_ids}
