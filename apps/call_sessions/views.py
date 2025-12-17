@@ -221,11 +221,8 @@ class SessionListView(APIView):
                 if not isinstance(metadata, dict):
                     metadata = {}
 
-                # Use call_duration column directly, convert to minutes for display
-                duration_seconds = row.get("call_duration")
-                duration = None
-                if duration_seconds is not None:
-                    duration = int(duration_seconds / 60)  # Convert to minutes
+                # Use call_duration column directly, send in seconds for frontend formatting
+                duration = row.get("call_duration")  # Keep as seconds
 
                 # Get caller info from caller_info column (new schema)
                 caller_number = row.get("caller_info")
