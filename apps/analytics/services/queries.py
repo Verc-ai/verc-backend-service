@@ -401,20 +401,20 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
+            .select("call_scorecard")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
-        
+
         response = query.execute()
         logger.info(f"Found {len(response.data)} sessions with scorecard data for intents")
-        
+
         intent_counts = {}
-        
+
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 detected_intents = scorecard_data.get("detected_intents", [])
                 if isinstance(detected_intents, list):
@@ -473,11 +473,11 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
+            .select("call_scorecard")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -495,7 +495,7 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
         }
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 # Get the pre-calculated sentiment shift category
                 sentiment_category = scorecard_data.get("sentiment_shift_category")
@@ -557,11 +557,11 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
+            .select("call_scorecard")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -572,7 +572,7 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
         threshold = SCORECARD_THRESHOLDS['compliance']
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 categories = scorecard_data.get("categories", {})
                 compliance = categories.get("compliance", {})
@@ -636,11 +636,11 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
+            .select("call_scorecard")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -651,7 +651,7 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
         threshold = SCORECARD_THRESHOLDS['servicing']
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 categories = scorecard_data.get("categories", {})
                 servicing = categories.get("servicing", {})
@@ -715,11 +715,11 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
+            .select("call_scorecard")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -730,7 +730,7 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
         threshold = SCORECARD_THRESHOLDS['collections']
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 categories = scorecard_data.get("categories", {})
                 collections = categories.get("collections", {})
