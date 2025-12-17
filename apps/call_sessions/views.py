@@ -70,8 +70,12 @@ class SessionListView(APIView):
             # Get query parameters
             limit = int(request.query_params.get("limit", 50))
             offset = int(request.query_params.get("offset", 0))
-            sort_by = request.query_params.get("sortBy", "created_at")
+            sort_by_param = request.query_params.get("sortBy", "created_at")
             sort_order = request.query_params.get("sortOrder", "desc")
+
+            # Map frontend sortBy to actual database column
+            # When frontend sorts by "created_at" (Date & Time column), use call_start_time
+            sort_by = "call_start_time" if sort_by_param == "created_at" else sort_by_param
 
             # Build query
             query = (
@@ -88,13 +92,14 @@ class SessionListView(APIView):
                 # We'll filter after fetching if needed, or use a simpler approach
                 pass  # TODO: Implement status filtering via metadata
 
+            # Date filters use call_start_time (actual call time) not created_at (ingestion time)
             date_from = request.query_params.get("dateFrom")
             if date_from:
-                query = query.gte("created_at", date_from)
+                query = query.gte("call_start_time", date_from)
 
             date_to = request.query_params.get("dateTo")
             if date_to:
-                query = query.lte("created_at", date_to)
+                query = query.lte("call_start_time", date_to)
 
             phone_number = request.query_params.get("phoneNumber")
             if phone_number:
