@@ -109,8 +109,8 @@ def get_sessions_count(user_id: Optional[str], period: str, start_date_str: Opti
         query = (
             supabase.table(config.sessions_table)
             .select("id", count="exact")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
 
@@ -157,8 +157,8 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
         query = (
             supabase.table(config.sessions_table)
             .select("id, metadata")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
@@ -216,8 +216,8 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
         query = (
             supabase.table(config.sessions_table)
             .select("created_at, last_event_received_at")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
@@ -281,11 +281,12 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
 
         # CRITICAL FIX: Make ONE query instead of one per day!
         # Fetch all data in the date range in a single query
+        # Use call_start_time for accurate date aggregation (not created_at which is ingestion time)
         query = (
             supabase.table(config.sessions_table)
-            .select("created_at, metadata")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_start_time, metadata")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
@@ -301,19 +302,19 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
         # Simple approach: Group sessions by date string (YYYY-MM-DD)
         # This avoids all timezone complexity
         date_groups = defaultdict(list)
-        
+
         for session in all_sessions:
-            created_at_str = session.get("created_at")
-            if not created_at_str:
+            call_start_time_str = session.get("call_start_time")
+            if not call_start_time_str:
                 continue
-                
+
             try:
                 # Extract just the date part (YYYY-MM-DD) from ISO string
                 # Supabase returns: "2025-12-13T21:10:36.123+00:00" or "2025-12-13T21:10:36Z"
-                date_part = created_at_str.split("T")[0]  # Get "2025-12-13"
+                date_part = call_start_time_str.split("T")[0]  # Get "2025-12-13"
                 date_groups[date_part].append(session)
             except Exception as e:
-                logger.warning(f"Error extracting date from {created_at_str}: {e}")
+                logger.warning(f"Error extracting date from {call_start_time_str}: {e}")
                 continue
         
         logger.info(f"Grouped {len(all_sessions)} sessions into {len(date_groups)} date groups")
@@ -401,8 +402,8 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
@@ -473,8 +474,8 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
@@ -557,8 +558,8 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
@@ -636,8 +637,8 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
@@ -715,8 +716,8 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
         query = (
             supabase.table(config.sessions_table)
             .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
             .not_.is_("call_scorecard_data", "null")
         )
