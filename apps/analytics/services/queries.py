@@ -188,12 +188,14 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
 
 def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> float:
     """
-    Calculate average handle time in seconds.
-    
+    Calculate average handle time in seconds using call_duration field.
+
     Args:
         user_id: User ID for tenant filtering (optional)
         period: Time period string
-        
+        start_date_str: Optional ISO date string for custom range
+        end_date_str: Optional ISO date string for custom range
+
     Returns:
         float: Average handle time in seconds
     """
@@ -201,55 +203,109 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
     if not supabase:
         logger.warning("Supabase client not available")
         return 0.0
-    
+
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
         config = settings.APP_SETTINGS.supabase
-        
+
         # Format dates as ISO strings for Supabase (without microseconds)
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
-        
+
         logger.info(f"Fetching avg handle time for period {period}: {query_start_str} to {query_end_str}")
 
-        # Use last_event_received_at instead of last_event_at (matches actual schema)
+        # Query call_duration field directly
         query = (
             supabase.table(config.sessions_table)
-            .select("created_at, last_event_received_at")
+            .select("call_duration")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_duration", "null")  # Only sessions with duration data
         )
-        
+
         response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions for handle time calculation")
-        
+        logger.info(f"Found {len(response.data)} sessions with duration data")
+
         if not response.data:
             return 0.0
-        
-        total_duration = 0
-        count = 0
-        
+
+        # Extract durations (stored as INTEGER seconds in database)
+        durations = []
         for session in response.data:
-            created_at = session.get("created_at")
-            last_event_at = session.get("last_event_received_at") or created_at
-            
-            if created_at and last_event_at:
-                try:
-                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    last_event = datetime.fromisoformat(last_event_at.replace("Z", "+00:00"))
-                    duration = (last_event - created).total_seconds()
-                    if duration > 0:
-                        total_duration += duration
-                        count += 1
-                except Exception as e:
-                    logger.warning(f"Error parsing dates: {e}")
-                    continue
-        
-        return total_duration / count if count > 0 else 0.0
+            duration = session.get("call_duration")
+            if duration is not None and duration > 0:
+                durations.append(duration)
+
+        if not durations:
+            return 0.0
+
+        avg_duration = sum(durations) / len(durations)
+        logger.info(f"Average handle time: {avg_duration:.2f} seconds from {len(durations)} calls")
+
+        return avg_duration
     except Exception as e:
         logger.error(f"Error calculating avg handle time: {e}", exc_info=True)
         return 0.0
+
+
+def get_total_call_time(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> int:
+    """
+    Calculate total call time (sum of all call durations) in seconds.
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+        start_date_str: Optional ISO date string for custom range
+        end_date_str: Optional ISO date string for custom range
+
+    Returns:
+        int: Total call time in seconds
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.warning("Supabase client not available")
+        return 0
+
+    try:
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        config = settings.APP_SETTINGS.supabase
+
+        # Format dates as ISO strings for Supabase (without microseconds)
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching total call time for period {period}: {query_start_str} to {query_end_str}")
+
+        # Query call_duration field directly
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_duration")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_duration", "null")  # Only sessions with duration data
+        )
+
+        response = query.execute()
+        logger.info(f"Found {len(response.data)} sessions with duration data for total time")
+
+        if not response.data:
+            return 0
+
+        # Sum all durations
+        total_seconds = 0
+        for session in response.data:
+            duration = session.get("call_duration")
+            if duration is not None and duration > 0:
+                total_seconds += duration
+
+        logger.info(f"Total call time: {total_seconds} seconds ({total_seconds / 3600:.2f} hours) from {len(response.data)} calls")
+
+        return total_seconds
+    except Exception as e:
+        logger.error(f"Error calculating total call time: {e}", exc_info=True)
+        return 0
 
 
 def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, List]:

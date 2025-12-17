@@ -7,6 +7,7 @@ from apps.analytics.services.queries import (
     get_sessions_count,
     get_acceptance_rate,
     get_avg_handle_time,
+    get_total_call_time,
     get_daily_metrics,
     get_period_dates,
     get_call_intents,
@@ -35,29 +36,31 @@ def get_scorecard_metrics(user, period: str, start_date: Optional[str] = None, e
         dict: Scorecard data with metrics and trends
     """
     user_id = str(user.id) if user else None
-    
+
     # Get main metrics
     total_calls = get_sessions_count(user_id, period, start_date, end_date)
     acceptance_rate = get_acceptance_rate(user_id, period, start_date, end_date)
     avg_handle_time_sec = get_avg_handle_time(user_id, period, start_date, end_date)
-    
+    total_call_time_sec = get_total_call_time(user_id, period, start_date, end_date)
+
     # Calculate conversion delta (placeholder - adjust based on your business logic)
     # This compares current period to previous period
     conversion_delta = 0.07  # Placeholder - implement actual comparison
-    
+
     # Get trend data for acceptance rate
     acceptance_trend = get_daily_metrics(user_id, period, "acceptance_rate", start_date, end_date)
-    
+
     # Get call intents and sentiment distribution
     call_intents = get_call_intents(user_id, period, start_date, end_date)
     sentiment_dist = get_sentiment_distribution(user_id, period, start_date, end_date)
-    
+
     return {
         "period": period,
         "metrics": {
             "total_calls": total_calls,
             "acceptance_rate": round(acceptance_rate, 2),
             "avg_handle_time_sec": round(avg_handle_time_sec, 0),
+            "total_call_time_sec": total_call_time_sec,
             "conversion_delta": conversion_delta,
         },
         "trends": {
