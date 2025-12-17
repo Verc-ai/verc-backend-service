@@ -103,6 +103,10 @@ class CallStatusView(APIView):
     4. Logs all status changes for monitoring
     """
 
+    # Disable DRF authentication for Twilio webhooks
+    authentication_classes = []
+    permission_classes = []
+
     def post(self, request):
         # Extract Twilio webhook parameters
         call_sid = request.POST.get('CallSid')
@@ -176,20 +180,19 @@ class CallStatusView(APIView):
                 pass
 
             elif call_status == 'ringing':
-                # Calling extension
-                update_data['status'] = 'calling'
+                # Calling extension - keep status as 'created' since call not yet answered
                 update_data['call_ringing_at'] = datetime.utcnow().isoformat()
 
             elif call_status in ['in-progress', 'answered']:
-                # SPY call active
-                update_data['status'] = 'in_progress'
+                # SPY call active - keep status as 'created' until recording is complete
                 update_data['call_answered_at'] = datetime.utcnow().isoformat()
 
             elif call_status == 'completed':
                 # Call ended normally
-                # Don't change status if already recorded/transcribing/transcribed
-                if current_status not in ['recorded', 'transcribing', 'transcribed', 'completed']:
-                    update_data['status'] = 'completed'
+                # Don't change status if already transcribing/transcribed/analyzing/completed
+                if current_status not in ['transcribing', 'transcribed', 'analyzing', 'completed']:
+                    # Call completed but recording not processed yet - keep as 'created'
+                    pass
 
                 update_data['call_completed_at'] = datetime.utcnow().isoformat()
 
@@ -199,7 +202,8 @@ class CallStatusView(APIView):
 
             elif call_status in ['failed', 'busy', 'no-answer', 'canceled']:
                 # Call failed
-                update_data['status'] = 'failed'
+                update_data['status'] = 'transcription_failed'
+                update_data['error_message'] = f'Call failed: {call_status}'
                 update_data['call_failed_at'] = datetime.utcnow().isoformat()
                 update_data['call_failure_reason'] = call_status
 
@@ -251,6 +255,10 @@ class RecordingView(APIView):
     3. Updates session with recording_sid and storage path
     4. Triggers transcription pipeline (Cloud Tasks or local)
     """
+
+    # Disable DRF authentication for Twilio webhooks
+    authentication_classes = []
+    permission_classes = []
 
     def post(self, request):
         # Extract Twilio webhook parameters
@@ -374,8 +382,7 @@ class RecordingView(APIView):
                 'recording_sid': recording_sid,
                 'audio_storage_path': storage_path,
                 'duration': int(recording_duration) if recording_duration else 0,
-                'status': 'recorded',
-                'recorded_at': datetime.utcnow().isoformat(),
+                'status': 'transcribing',  # Recording complete, ready to transcribe (created → transcribing → transcribed → analyzing → completed)
                 'last_event_received_at': datetime.utcnow().isoformat()
             }
 
@@ -569,9 +576,11 @@ class HangupView(APIView):
                 'last_event_received_at': datetime.utcnow().isoformat()
             }
 
-            # Only update status if call is still active
-            if current_status in ['initiated', 'calling', 'in_progress']:
-                update_data['status'] = 'terminated'
+            # Only update status if call is still active (created = call in progress)
+            if current_status == 'created':
+                # Mark as transcription_failed since call was terminated early
+                update_data['status'] = 'transcription_failed'
+                update_data['error_message'] = f'Call terminated manually: {reason}'
 
             supabase.table(sessions_table).update(update_data).eq('id', session_id).execute()
 

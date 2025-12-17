@@ -109,8 +109,8 @@ def get_sessions_count(user_id: Optional[str], period: str, start_date_str: Opti
         query = (
             supabase.table(config.sessions_table)
             .select("id", count="exact")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
 
@@ -157,8 +157,8 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
         query = (
             supabase.table(config.sessions_table)
             .select("id, metadata")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
@@ -188,12 +188,14 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
 
 def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> float:
     """
-    Calculate average handle time in seconds.
-    
+    Calculate average handle time in seconds using call_duration field.
+
     Args:
         user_id: User ID for tenant filtering (optional)
         period: Time period string
-        
+        start_date_str: Optional ISO date string for custom range
+        end_date_str: Optional ISO date string for custom range
+
     Returns:
         float: Average handle time in seconds
     """
@@ -201,55 +203,109 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
     if not supabase:
         logger.warning("Supabase client not available")
         return 0.0
-    
+
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
         config = settings.APP_SETTINGS.supabase
-        
+
         # Format dates as ISO strings for Supabase (without microseconds)
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
-        
+
         logger.info(f"Fetching avg handle time for period {period}: {query_start_str} to {query_end_str}")
 
-        # Use last_event_received_at instead of last_event_at (matches actual schema)
+        # Query call_duration field directly
         query = (
             supabase.table(config.sessions_table)
-            .select("created_at, last_event_received_at")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_duration")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_duration", "null")  # Only sessions with duration data
         )
-        
+
         response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions for handle time calculation")
-        
+        logger.info(f"Found {len(response.data)} sessions with duration data")
+
         if not response.data:
             return 0.0
-        
-        total_duration = 0
-        count = 0
-        
+
+        # Extract durations (stored as INTEGER seconds in database)
+        durations = []
         for session in response.data:
-            created_at = session.get("created_at")
-            last_event_at = session.get("last_event_received_at") or created_at
-            
-            if created_at and last_event_at:
-                try:
-                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    last_event = datetime.fromisoformat(last_event_at.replace("Z", "+00:00"))
-                    duration = (last_event - created).total_seconds()
-                    if duration > 0:
-                        total_duration += duration
-                        count += 1
-                except Exception as e:
-                    logger.warning(f"Error parsing dates: {e}")
-                    continue
-        
-        return total_duration / count if count > 0 else 0.0
+            duration = session.get("call_duration")
+            if duration is not None and duration > 0:
+                durations.append(duration)
+
+        if not durations:
+            return 0.0
+
+        avg_duration = sum(durations) / len(durations)
+        logger.info(f"Average handle time: {avg_duration:.2f} seconds from {len(durations)} calls")
+
+        return avg_duration
     except Exception as e:
         logger.error(f"Error calculating avg handle time: {e}", exc_info=True)
         return 0.0
+
+
+def get_total_call_time(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> int:
+    """
+    Calculate total call time (sum of all call durations) in seconds.
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+        start_date_str: Optional ISO date string for custom range
+        end_date_str: Optional ISO date string for custom range
+
+    Returns:
+        int: Total call time in seconds
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.warning("Supabase client not available")
+        return 0
+
+    try:
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        config = settings.APP_SETTINGS.supabase
+
+        # Format dates as ISO strings for Supabase (without microseconds)
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching total call time for period {period}: {query_start_str} to {query_end_str}")
+
+        # Query call_duration field directly
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_duration")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_duration", "null")  # Only sessions with duration data
+        )
+
+        response = query.execute()
+        logger.info(f"Found {len(response.data)} sessions with duration data for total time")
+
+        if not response.data:
+            return 0
+
+        # Sum all durations
+        total_seconds = 0
+        for session in response.data:
+            duration = session.get("call_duration")
+            if duration is not None and duration > 0:
+                total_seconds += duration
+
+        logger.info(f"Total call time: {total_seconds} seconds ({total_seconds / 3600:.2f} hours) from {len(response.data)} calls")
+
+        return total_seconds
+    except Exception as e:
+        logger.error(f"Error calculating total call time: {e}", exc_info=True)
+        return 0
 
 
 def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, List]:
@@ -281,11 +337,12 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
 
         # CRITICAL FIX: Make ONE query instead of one per day!
         # Fetch all data in the date range in a single query
+        # Use call_start_time for accurate date aggregation (not created_at which is ingestion time)
         query = (
             supabase.table(config.sessions_table)
-            .select("created_at, metadata")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_start_time, metadata")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
         
@@ -301,19 +358,19 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
         # Simple approach: Group sessions by date string (YYYY-MM-DD)
         # This avoids all timezone complexity
         date_groups = defaultdict(list)
-        
+
         for session in all_sessions:
-            created_at_str = session.get("created_at")
-            if not created_at_str:
+            call_start_time_str = session.get("call_start_time")
+            if not call_start_time_str:
                 continue
-                
+
             try:
                 # Extract just the date part (YYYY-MM-DD) from ISO string
                 # Supabase returns: "2025-12-13T21:10:36.123+00:00" or "2025-12-13T21:10:36Z"
-                date_part = created_at_str.split("T")[0]  # Get "2025-12-13"
+                date_part = call_start_time_str.split("T")[0]  # Get "2025-12-13"
                 date_groups[date_part].append(session)
             except Exception as e:
-                logger.warning(f"Error extracting date from {created_at_str}: {e}")
+                logger.warning(f"Error extracting date from {call_start_time_str}: {e}")
                 continue
         
         logger.info(f"Grouped {len(all_sessions)} sessions into {len(date_groups)} date groups")
@@ -400,20 +457,20 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_scorecard")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
-        
+
         response = query.execute()
         logger.info(f"Found {len(response.data)} sessions with scorecard data for intents")
-        
+
         intent_counts = {}
-        
+
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 detected_intents = scorecard_data.get("detected_intents", [])
                 if isinstance(detected_intents, list):
@@ -472,11 +529,11 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_scorecard")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -494,7 +551,7 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
         }
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 # Get the pre-calculated sentiment shift category
                 sentiment_category = scorecard_data.get("sentiment_shift_category")
@@ -556,11 +613,11 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_scorecard")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -571,7 +628,7 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
         threshold = SCORECARD_THRESHOLDS['compliance']
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 categories = scorecard_data.get("categories", {})
                 compliance = categories.get("compliance", {})
@@ -635,11 +692,11 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_scorecard")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -650,7 +707,7 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
         threshold = SCORECARD_THRESHOLDS['servicing']
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 categories = scorecard_data.get("categories", {})
                 servicing = categories.get("servicing", {})
@@ -714,11 +771,11 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
 
         query = (
             supabase.table(config.sessions_table)
-            .select("call_scorecard_data")
-            .gte("created_at", query_start_str)
-            .lte("created_at", query_end_str)
+            .select("call_scorecard")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard_data", "null")
+            .not_.is_("call_scorecard", "null")
         )
 
         response = query.execute()
@@ -729,7 +786,7 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
         threshold = SCORECARD_THRESHOLDS['collections']
 
         for session in response.data:
-            scorecard_data = session.get("call_scorecard_data", {})
+            scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 categories = scorecard_data.get("categories", {})
                 collections = categories.get("collections", {})

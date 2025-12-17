@@ -7,6 +7,7 @@ from django.conf import settings
 from apps.core.services.supabase import get_supabase_client
 import logging
 import httpx
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +90,14 @@ def initiate_spy_call(extension: str, call_details: dict) -> dict:
         supabase = get_supabase_client()
 
         session_data = {
+            'id': str(uuid.uuid4()),  # Generate UUID for primary key
             'call_sid': call_sid,
             'buffalo_call_id': call_details['callId'],
             'agent_extension': extension,
             'direction': call_details['direction'],
             'caller_info': call_details['caller'],
             'destination_number': call_details['destNum'],
-            'status': 'initiated',
+            'status': 'created',  # Main call lifecycle status (created → transcribing → transcribed → analyzing → completed)
             'duration': 0  # Will be updated when call completes
         }
 

@@ -27,7 +27,7 @@ class CallSummaryService:
             raise ValueError("OpenAI API key not configured")
 
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.model = "gpt-5.2"
+        self.model = "gpt-5.2"  # GPT-5.2 Thinking - released Dec 11, 2025
         self.temperature = 0.3
 
         # Load system prompts from files
@@ -138,11 +138,24 @@ class CallSummaryService:
             )
 
             # Parse response
-            content = response.choices[0].message.content
+            message = response.choices[0].message
+            content = message.content
+
+            # Debug logging
+            logger.info(f"OpenAI response - finish_reason: {response.choices[0].finish_reason}")
+            logger.info(f"OpenAI response - content length: {len(content) if content else 0}")
+            logger.info(f"OpenAI response - has refusal: {hasattr(message, 'refusal') and message.refusal is not None}")
+            if hasattr(message, 'refusal') and message.refusal:
+                logger.error(f"OpenAI refused to generate scorecard: {message.refusal}")
+                raise ValueError(f"OpenAI refused: {message.refusal}")
+            if not content:
+                logger.error("OpenAI returned empty content")
+                raise ValueError("OpenAI returned empty content")
+
             raw_scorecard = json.loads(content)
 
-            # Transform to match expected structure
-            scorecard_data = self._transform_scorecard_data(raw_scorecard)
+            # Transform to match expected structure (pass transcripts for ID mapping)
+            scorecard_data = self._transform_scorecard_data(raw_scorecard, transcripts)
 
             # Calculate overall weighted score
             scorecard_data["overall_weighted_score"] = (
@@ -259,13 +272,15 @@ class CallSummaryService:
     def _calculate_scorecard_max_tokens(self, transcript_count: int) -> int:
         """Calculate max tokens for scorecard."""
         # Scorecard responses can be large with sentiment analysis for each turn
-        # Base: 4000 for short calls, scale up for longer calls
-        if transcript_count > 50:
-            return 6000  # Increased for long calls with many turns
+        # GPT-5.2 has 128K context window, be more generous with output tokens
+        if transcript_count > 100:
+            return 16000  # Very long calls
+        elif transcript_count > 50:
+            return 12000  # Long calls with many turns
         elif transcript_count > 30:
-            return 5000  # Increased for medium-length calls
+            return 8000  # Medium-length calls
         else:
-            return 4000  # Increased from 3000 for short calls
+            return 6000  # Short calls
 
     def _validate_summary_data(self, data: Dict[str, Any]) -> None:
         """Validate summary data structure."""
@@ -349,7 +364,7 @@ class CallSummaryService:
         threshold = SCORECARD_THRESHOLDS.get(category, 70)
         return score >= threshold
 
-    def _transform_scorecard_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _transform_scorecard_data(self, raw_data: Dict[str, Any], transcripts: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Transform OpenAI response to match expected scorecard structure."""
         agent_score = raw_data.get("agent_score", {})
 
@@ -389,8 +404,23 @@ class CallSummaryService:
                 "issues": [],
             }
 
-        # Calculate sentiment shift category
+        # Map transcript sentiments from sequential IDs to actual UUIDs
         transcript_sentiments = raw_data.get("transcript_sentiments", [])
+        if transcripts:
+            # Create mapping from sequential index to actual transcript ID
+            id_mapping = {}
+            for i, t in enumerate(transcripts):
+                sequential_id = f"transcript-{i}"
+                actual_id = t.get("id", sequential_id)
+                id_mapping[sequential_id] = actual_id
+
+            # Transform sentiment IDs
+            for sentiment in transcript_sentiments:
+                original_id = sentiment.get("transcript_id", "")
+                # Map sequential ID to actual UUID, or keep original if not found
+                sentiment["transcript_id"] = id_mapping.get(original_id, original_id)
+
+        # Calculate sentiment shift category
         sentiment_shift_category = self._calculate_sentiment_shift(transcript_sentiments)
 
         # Build final structure

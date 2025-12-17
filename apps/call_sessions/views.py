@@ -70,8 +70,12 @@ class SessionListView(APIView):
             # Get query parameters
             limit = int(request.query_params.get("limit", 50))
             offset = int(request.query_params.get("offset", 0))
-            sort_by = request.query_params.get("sortBy", "created_at")
+            sort_by_param = request.query_params.get("sortBy", "created_at")
             sort_order = request.query_params.get("sortOrder", "desc")
+
+            # Map frontend sortBy to actual database column
+            # When frontend sorts by "created_at" (Date & Time column), use call_start_time
+            sort_by = "call_start_time" if sort_by_param == "created_at" else sort_by_param
 
             # Build query
             query = (
@@ -88,13 +92,14 @@ class SessionListView(APIView):
                 # We'll filter after fetching if needed, or use a simpler approach
                 pass  # TODO: Implement status filtering via metadata
 
+            # Date filters use call_start_time (actual call time) not created_at (ingestion time)
             date_from = request.query_params.get("dateFrom")
             if date_from:
-                query = query.gte("created_at", date_from)
+                query = query.gte("call_start_time", date_from)
 
             date_to = request.query_params.get("dateTo")
             if date_to:
-                query = query.lte("created_at", date_to)
+                query = query.lte("call_start_time", date_to)
 
             phone_number = request.query_params.get("phoneNumber")
             if phone_number:
@@ -216,43 +221,41 @@ class SessionListView(APIView):
                     session_status = "transcribed"
                 # else: keep as "created" or whatever was in database
 
-                # Get duration from metadata (where simulator stores it), not calculated
+                # Get duration from call_duration column (stored in seconds)
                 metadata = row.get("metadata", {})
                 if not isinstance(metadata, dict):
                     metadata = {}
 
-                duration = metadata.get("duration")
-                if duration is not None:
-                    # Convert from milliseconds to seconds (metadata stores in ms)
-                    duration = int(duration / 1000)
-                else:
-                    # Fallback: Calculate from timestamps (returns seconds)
-                    duration = calculate_session_duration(
-                        row.get("created_at"), row.get("last_event_received_at")
-                    )
+                # Use call_duration column directly, send in seconds for frontend formatting
+                duration = row.get("call_duration")  # Keep as seconds
 
-                # Get caller number
-                caller_number = row.get("caller_number")
+                # Get caller info from caller_info column (new schema)
+                caller_number = row.get("caller_info")
                 if not caller_number and metadata:
                     caller_number = metadata.get("caller_number") or metadata.get(
                         "from"
                     )
 
-                # Get overall score from scorecard data
+                # Get destination number from destination_number column (new schema)
+                destination_number = row.get("destination_number")
+
+                # Get overall score from call_scorecard (new schema, was call_scorecard_data)
                 overall_score = None
-                if row.get("call_scorecard_data") and isinstance(
-                    row.get("call_scorecard_data"), dict
+                if row.get("call_scorecard") and isinstance(
+                    row.get("call_scorecard"), dict
                 ):
-                    overall_score = row["call_scorecard_data"].get(
+                    overall_score = row["call_scorecard"].get(
                         "overall_weighted_score"
                     )
 
                 session = {
                     "id": row.get("id"),
-                    "created_at": row.get("created_at"),
-                    "last_event_received_at": row.get("last_event_received_at"),
-                    "duration": duration,
-                    "caller_number": caller_number,
+                    "filename": row.get("filename"),  # Display filename instead of UUID
+                    "created_at": row.get("call_start_time") or row.get("created_at"),  # Use call_start_time (new schema)
+                    "last_event_received_at": row.get("call_end_time"),  # Use call_end_time for consistency
+                    "duration": duration,  # Already in minutes
+                    "caller_number": caller_number,  # From caller_info column
+                    "destination_number": destination_number,  # From destination_number column
                     "call_status": session_status,  # Legacy field
                     "status": session_status,
                     "turn_count": turn_count,
@@ -263,7 +266,7 @@ class SessionListView(APIView):
                     "call_scorecard_status": row.get(
                         "call_scorecard_status", "not_started"
                     ),
-                    "overall_weighted_score": overall_score,
+                    "overall_weighted_score": overall_score,  # From call_scorecard.overall_weighted_score
                 }
                 sessions.append(session)
 
@@ -437,7 +440,7 @@ class SessionDetailView(APIView):
                 "call_summary_status": session_data.get(
                     "call_summary_status", "not_started"
                 ),
-                "call_summary_data": session_data.get("call_summary_data"),
+                "call_summary_data": session_data.get("call_summary"),  # Read from 'call_summary' column
                 "call_summary_error": session_data.get("call_summary_error"),
                 "call_summary_generated_at": session_data.get(
                     "call_summary_generated_at"
@@ -446,7 +449,7 @@ class SessionDetailView(APIView):
                 "call_scorecard_status": session_data.get(
                     "call_scorecard_status", "not_started"
                 ),
-                "call_scorecard_data": session_data.get("call_scorecard_data"),
+                "call_scorecard_data": session_data.get("call_scorecard"),  # Read from 'call_scorecard' column
                 "call_scorecard_error": session_data.get("call_scorecard_error"),
                 "call_scorecard_generated_at": session_data.get(
                     "call_scorecard_generated_at"
@@ -491,13 +494,47 @@ class GenerateSummaryView(APIView):
     POST /api/sessions/{id}/generate-summary
     Generate AI summary for a call session.
     """
+    permission_classes = [AllowAny]
 
     def post(self, request, session_id):
-        # TODO: Implement AI summary generation
-        return Response(
-            {"message": "Summary generation started (mock)", "sessionId": session_id},
-            status=status.HTTP_200_OK,
-        )
+        try:
+            from apps.ai.services import CallSummaryService
+            from apps.core.services.supabase import get_supabase_client
+            from apps.core.utils import format_timestamp
+
+            # Initialize AI service
+            ai_service = CallSummaryService()
+
+            # Generate summary
+            summary_data = ai_service.generate_summary(session_id)
+
+            # Update database with success state
+            supabase = get_supabase_client()
+            if supabase:
+                config = settings.APP_SETTINGS.supabase
+                now = format_timestamp()
+                try:
+                    supabase.table(config.sessions_table).update({
+                        'call_summary_status': 'completed',
+                        'call_summary': summary_data,
+                        'call_summary_generated_at': now,
+                        'call_summary_error': None,  # Clear any cached error
+                    }).eq('id', session_id).execute()
+                    logger.info(f"✅ Updated database with successful summary for session {session_id}")
+                except Exception as db_error:
+                    logger.error(f"Failed to update database for session {session_id}: {db_error}", exc_info=True)
+                    # Continue and return the summary even if DB update fails
+
+            return Response(
+                {"success": True, "summary": summary_data, "sessionId": session_id},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate summary for {session_id}: {e}", exc_info=True)
+            return Response(
+                {"success": False, "error": str(e), "sessionId": session_id},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class GenerateScorecardView(APIView):
@@ -505,10 +542,44 @@ class GenerateScorecardView(APIView):
     POST /api/sessions/{id}/generate-scorecard
     Generate AI scorecard for a call session.
     """
+    permission_classes = [AllowAny]
 
     def post(self, request, session_id):
-        # TODO: Implement AI scorecard generation
-        return Response(
-            {"message": "Scorecard generation started (mock)", "sessionId": session_id},
-            status=status.HTTP_200_OK,
-        )
+        try:
+            from apps.ai.services import CallSummaryService
+            from apps.core.services.supabase import get_supabase_client
+            from apps.core.utils import format_timestamp
+
+            # Initialize AI service
+            ai_service = CallSummaryService()
+
+            # Generate scorecard
+            scorecard_data = ai_service.generate_scorecard(session_id)
+
+            # Update database with success state
+            supabase = get_supabase_client()
+            if supabase:
+                config = settings.APP_SETTINGS.supabase
+                now = format_timestamp()
+                try:
+                    supabase.table(config.sessions_table).update({
+                        'call_scorecard_status': 'completed',
+                        'call_scorecard': scorecard_data,
+                        'call_scorecard_generated_at': now,
+                        'call_scorecard_error': None,  # Clear any cached error
+                    }).eq('id', session_id).execute()
+                    logger.info(f"✅ Updated database with successful scorecard for session {session_id}")
+                except Exception as db_error:
+                    logger.error(f"Failed to update database for session {session_id}: {db_error}", exc_info=True)
+                    # Continue and return the scorecard even if DB update fails
+
+            return Response(
+                {"success": True, "scorecard": scorecard_data, "sessionId": session_id},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate scorecard for {session_id}: {e}", exc_info=True)
+            return Response(
+                {"success": False, "error": str(e), "sessionId": session_id},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

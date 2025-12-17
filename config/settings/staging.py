@@ -24,3 +24,12 @@ X_FRAME_OPTIONS = 'DENY'
 # Logging
 LOGGING['root']['level'] = 'INFO'
 
+# Cache backend (use in-memory cache to avoid Redis dependency in Cloud Run)
+# Feature flags are cached for 60s and rarely change, so per-instance cache is fine
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+    }
+}
+
