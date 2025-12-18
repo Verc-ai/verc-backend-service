@@ -87,7 +87,7 @@ $$;
 CREATE OR REPLACE FUNCTION get_compliance_summary(
     start_date_param TIMESTAMPTZ,
     end_date_param TIMESTAMPTZ,
-    threshold_param NUMERIC DEFAULT 80
+    threshold_param NUMERIC DEFAULT 40
 )
 RETURNS TABLE(
     pass_count BIGINT,
@@ -101,19 +101,11 @@ BEGIN
     SELECT
         COUNT(*) FILTER (
             WHERE
-                (call_scorecard->'categories'->'compliance'->>'pass')::boolean = true
-                OR (
-                    (call_scorecard->'categories'->'compliance'->>'pass') IS NULL
-                    AND (call_scorecard->'categories'->'compliance'->>'score')::numeric >= threshold_param
-                )
+                (call_scorecard->'categories'->'compliance'->>'score')::numeric >= threshold_param
         ) as pass_count,
         COUNT(*) FILTER (
             WHERE
-                (call_scorecard->'categories'->'compliance'->>'pass')::boolean = false
-                OR (
-                    (call_scorecard->'categories'->'compliance'->>'pass') IS NULL
-                    AND (call_scorecard->'categories'->'compliance'->>'score')::numeric < threshold_param
-                )
+                (call_scorecard->'categories'->'compliance'->>'score')::numeric < threshold_param
         ) as fail_count,
         COUNT(*) as total_count
     FROM transcription_sessions
@@ -131,7 +123,7 @@ $$;
 CREATE OR REPLACE FUNCTION get_servicing_summary(
     start_date_param TIMESTAMPTZ,
     end_date_param TIMESTAMPTZ,
-    threshold_param NUMERIC DEFAULT 70
+    threshold_param NUMERIC DEFAULT 40
 )
 RETURNS TABLE(
     pass_count BIGINT,
@@ -145,19 +137,11 @@ BEGIN
     SELECT
         COUNT(*) FILTER (
             WHERE
-                (call_scorecard->'categories'->'servicing'->>'pass')::boolean = true
-                OR (
-                    (call_scorecard->'categories'->'servicing'->>'pass') IS NULL
-                    AND (call_scorecard->'categories'->'servicing'->>'score')::numeric >= threshold_param
-                )
+                (call_scorecard->'categories'->'servicing'->>'score')::numeric >= threshold_param
         ) as pass_count,
         COUNT(*) FILTER (
             WHERE
-                (call_scorecard->'categories'->'servicing'->>'pass')::boolean = false
-                OR (
-                    (call_scorecard->'categories'->'servicing'->>'pass') IS NULL
-                    AND (call_scorecard->'categories'->'servicing'->>'score')::numeric < threshold_param
-                )
+                (call_scorecard->'categories'->'servicing'->>'score')::numeric < threshold_param
         ) as fail_count,
         COUNT(*) as total_count
     FROM transcription_sessions
@@ -175,7 +159,7 @@ $$;
 CREATE OR REPLACE FUNCTION get_collections_summary(
     start_date_param TIMESTAMPTZ,
     end_date_param TIMESTAMPTZ,
-    threshold_param NUMERIC DEFAULT 75
+    threshold_param NUMERIC DEFAULT 40
 )
 RETURNS TABLE(
     pass_count BIGINT,
@@ -189,19 +173,11 @@ BEGIN
     SELECT
         COUNT(*) FILTER (
             WHERE
-                (call_scorecard->'categories'->'collections'->>'pass')::boolean = true
-                OR (
-                    (call_scorecard->'categories'->'collections'->>'pass') IS NULL
-                    AND (call_scorecard->'categories'->'collections'->>'score')::numeric >= threshold_param
-                )
+                (call_scorecard->'categories'->'collections'->>'score')::numeric >= threshold_param
         ) as pass_count,
         COUNT(*) FILTER (
             WHERE
-                (call_scorecard->'categories'->'collections'->>'pass')::boolean = false
-                OR (
-                    (call_scorecard->'categories'->'collections'->>'pass') IS NULL
-                    AND (call_scorecard->'categories'->'collections'->>'score')::numeric < threshold_param
-                )
+                (call_scorecard->'categories'->'collections'->>'score')::numeric < threshold_param
         ) as fail_count,
         COUNT(*) as total_count
     FROM transcription_sessions

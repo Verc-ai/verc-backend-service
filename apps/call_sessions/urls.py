@@ -15,5 +15,6 @@ urlpatterns = [
     path('<str:session_id>', views.SessionDetailView.as_view(), name='detail'),  # GET /api/sessions/{id}
     path('<str:session_id>/generate-summary', views.GenerateSummaryView.as_view(), name='generate-summary'),  # POST /api/sessions/{id}/generate-summary
     path('<str:session_id>/generate-scorecard', views.GenerateScorecardView.as_view(), name='generate-scorecard'),  # POST /api/sessions/{id}/generate-scorecard
+    path('<str:session_id>/notes', views.UpdateSessionNotesView.as_view(), name='update-notes'),  # PATCH /api/sessions/{id}/notes
 ]
 

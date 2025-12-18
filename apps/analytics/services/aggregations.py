@@ -1,6 +1,7 @@
 """
 Business logic for aggregating analytics data.
 Combines raw queries into meaningful business metrics.
+Updated: Added action_codes and result_codes support.
 """
 from typing import Dict, Any, Optional
 from apps.analytics.services.queries import (
@@ -11,6 +12,8 @@ from apps.analytics.services.queries import (
     get_daily_metrics,
     get_period_dates,
     get_call_intents,
+    get_action_codes,
+    get_result_codes,
     get_sentiment_distribution,
     get_compliance_scorecard_summary,
     get_servicing_scorecard_summary,
@@ -25,17 +28,17 @@ logger = logging.getLogger(__name__)
 def get_scorecard_metrics(user, period: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """
     Get aggregated scorecard metrics for the dashboard.
-    
+
     Args:
         user: Django user object (for tenant filtering)
         period: Time period string
         start_date: Optional ISO date string for custom range
         end_date: Optional ISO date string for custom range
-        
+
     Returns:
         dict: Scorecard data with metrics and trends
     """
-    user_id = str(user.id) if user else None
+    user_id = str(user.id) if user and hasattr(user, 'id') and user.id is not None else None
 
     # Get main metrics
     total_calls = get_sessions_count(user_id, period, start_date, end_date)
@@ -50,8 +53,10 @@ def get_scorecard_metrics(user, period: str, start_date: Optional[str] = None, e
     # Get trend data for acceptance rate
     acceptance_trend = get_daily_metrics(user_id, period, "acceptance_rate", start_date, end_date)
 
-    # Get call intents and sentiment distribution
+    # Get call intents, action codes, result codes, and sentiment distribution
     call_intents = get_call_intents(user_id, period, start_date, end_date)
+    action_codes = get_action_codes(user_id, period, start_date, end_date)
+    result_codes = get_result_codes(user_id, period, start_date, end_date)
     sentiment_dist = get_sentiment_distribution(user_id, period, start_date, end_date)
 
     return {
@@ -67,6 +72,8 @@ def get_scorecard_metrics(user, period: str, start_date: Optional[str] = None, e
             "acceptance_rate": acceptance_trend,
         },
         "call_intents": call_intents,
+        "action_codes": action_codes,
+        "result_codes": result_codes,
         "sentiment_distribution": sentiment_dist,
     }
 
@@ -74,18 +81,18 @@ def get_scorecard_metrics(user, period: str, start_date: Optional[str] = None, e
 def get_trend_metrics(user, period: str, metric: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """
     Get trend metrics for time series visualization.
-    
+
     Args:
         user: Django user object (for tenant filtering)
         period: Time period string
         metric: Specific metric to fetch (optional)
         start_date: Optional ISO date string for custom range
         end_date: Optional ISO date string for custom range
-        
+
     Returns:
         dict: Trend data with time series for requested metrics
     """
-    user_id = str(user.id) if user else None
+    user_id = str(user.id) if user and hasattr(user, 'id') and user.id is not None else None
     
     metrics_to_fetch = [metric] if metric else ["acceptance_rate", "total_calls"]
     
@@ -103,15 +110,15 @@ def get_trend_metrics(user, period: str, metric: Optional[str] = None, start_dat
 def get_health_metrics(user, period: str) -> Dict[str, Any]:
     """
     Get system and quality health metrics.
-    
+
     Args:
         user: Django user object (for tenant filtering)
         period: Time period string
-        
+
     Returns:
         dict: Health metrics data
     """
-    user_id = str(user.id) if user else None
+    user_id = str(user.id) if user and hasattr(user, 'id') and user.id is not None else None
     
     # Placeholder metrics - implement based on your actual system monitoring
     # These would typically come from error logs, response time tracking, etc.
@@ -143,7 +150,7 @@ def get_scorecard_summaries(user, period: str, start_date: Optional[str] = None,
     Returns:
         dict: Scorecard summaries with pass/fail counts, percentages, and deltas
     """
-    user_id = str(user.id) if user else None
+    user_id = str(user.id) if user and hasattr(user, 'id') and user.id is not None else None
 
     # Get summaries for each scorecard type
     compliance_summary = get_compliance_scorecard_summary(user_id, period, start_date, end_date)
