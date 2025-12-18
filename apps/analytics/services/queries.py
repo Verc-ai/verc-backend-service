@@ -13,6 +13,56 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def fetch_all_records(query, page_size: int = 1000) -> List[Dict[str, Any]]:
+    """
+    Fetch all records from a Supabase query using pagination.
+
+    Supabase has a default limit of 1000 records per query. This helper
+    fetches data in chunks until all records are retrieved.
+
+    Args:
+        query: Supabase query object (already built with filters)
+        page_size: Number of records to fetch per page (default: 1000)
+
+    Returns:
+        list: All records combined from all pages
+    """
+    all_data = []
+    offset = 0
+
+    while True:
+        # Calculate range for this page (inclusive on both ends)
+        start = offset
+        end = offset + page_size - 1
+
+        try:
+            # Clone the query and add range for this page
+            # Note: We need to reconstruct the query with range
+            # Since Supabase query objects aren't easily cloneable,
+            # we'll fetch and check if we got less than page_size
+            paginated_query = query.range(start, end)
+            response = paginated_query.execute()
+
+            page_data = response.data
+            all_data.extend(page_data)
+
+            logger.debug(f"Fetched {len(page_data)} records (offset {offset})")
+
+            # If we got fewer records than page_size, we've reached the end
+            if len(page_data) < page_size:
+                break
+
+            offset += page_size
+
+        except Exception as e:
+            logger.error(f"Error fetching page at offset {offset}: {e}")
+            # Return what we have so far rather than failing completely
+            break
+
+    logger.info(f"Fetched total of {len(all_data)} records using pagination")
+    return all_data
+
+
 def get_period_dates(period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Tuple[datetime, datetime]:
     """
     Get start and end dates for a given period.
@@ -106,6 +156,8 @@ def get_sessions_count(user_id: Optional[str], period: str, start_date_str: Opti
         
         logger.info(f"Fetching sessions count for period {period}: {query_start_str} to {query_end_str}")
 
+        # Use count="exact" with head=True to get count without fetching data
+        # This avoids the 1000 record limit since we're only getting the count
         query = (
             supabase.table(config.sessions_table)
             .select("id", count="exact")
@@ -116,9 +168,10 @@ def get_sessions_count(user_id: Optional[str], period: str, start_date_str: Opti
 
         # TODO: Add tenant filtering when user_id is provided
         # This requires understanding the tenant/user relationship in your schema
-        
+
         response = query.execute()
-        count = response.count if hasattr(response, 'count') else len(response.data)
+        # Use count attribute directly - it should be accurate with count="exact"
+        count = response.count if hasattr(response, 'count') and response.count is not None else 0
         logger.info(f"Found {count} sessions for period {period}")
         return count
     except Exception as e:
@@ -161,25 +214,26 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
             .lte("call_start_time", query_end_str)
             .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
         )
-        
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions for acceptance rate calculation")
-        
-        if not response.data:
+
+        # Use pagination to fetch all records
+        all_sessions = fetch_all_records(query)
+        logger.info(f"Found {len(all_sessions)} sessions for acceptance rate calculation")
+
+        if not all_sessions:
             return 0.0
-        
-        total = len(response.data)
+
+        total = len(all_sessions)
         accepted = 0
-        
+
         # Check metadata for acceptance status
         # Adjust this logic based on your actual data structure
-        for session in response.data:
+        for session in all_sessions:
             metadata = session.get("metadata", {})
             if isinstance(metadata, dict):
                 # Check various possible fields for acceptance
                 if metadata.get("accepted") or metadata.get("status") == "accepted":
                     accepted += 1
-        
+
         return accepted / total if total > 0 else 0.0
     except Exception as e:
         logger.error(f"Error calculating acceptance rate: {e}", exc_info=True)
@@ -188,7 +242,7 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
 
 def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> float:
     """
-    Calculate average handle time in seconds using call_duration field.
+    Calculate average handle time in seconds using database aggregation (RPC).
 
     Args:
         user_id: User ID for tenant filtering (optional)
@@ -206,7 +260,6 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
 
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
-        config = settings.APP_SETTINGS.supabase
 
         # Format dates as ISO strings for Supabase (without microseconds)
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -214,34 +267,17 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
 
         logger.info(f"Fetching avg handle time for period {period}: {query_start_str} to {query_end_str}")
 
-        # Query call_duration field directly
-        query = (
-            supabase.table(config.sessions_table)
-            .select("call_duration")
-            .gte("call_start_time", query_start_str)
-            .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_duration", "null")  # Only sessions with duration data
-        )
+        # Use database-level aggregation via RPC for better performance
+        response = supabase.rpc(
+            'get_avg_call_duration',
+            {
+                'start_date_param': query_start_str,
+                'end_date_param': query_end_str
+            }
+        ).execute()
 
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with duration data")
-
-        if not response.data:
-            return 0.0
-
-        # Extract durations (stored as INTEGER seconds in database)
-        durations = []
-        for session in response.data:
-            duration = session.get("call_duration")
-            if duration is not None and duration > 0:
-                durations.append(duration)
-
-        if not durations:
-            return 0.0
-
-        avg_duration = sum(durations) / len(durations)
-        logger.info(f"Average handle time: {avg_duration:.2f} seconds from {len(durations)} calls")
+        avg_duration = float(response.data) if response.data else 0.0
+        logger.info(f"Average handle time: {avg_duration:.2f} seconds (via RPC)")
 
         return avg_duration
     except Exception as e:
@@ -251,7 +287,7 @@ def get_avg_handle_time(user_id: Optional[str], period: str, start_date_str: Opt
 
 def get_total_call_time(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> int:
     """
-    Calculate total call time (sum of all call durations) in seconds.
+    Calculate total call time (sum of all call durations) in seconds using database aggregation (RPC).
 
     Args:
         user_id: User ID for tenant filtering (optional)
@@ -269,7 +305,6 @@ def get_total_call_time(user_id: Optional[str], period: str, start_date_str: Opt
 
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
-        config = settings.APP_SETTINGS.supabase
 
         # Format dates as ISO strings for Supabase (without microseconds)
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -277,30 +312,17 @@ def get_total_call_time(user_id: Optional[str], period: str, start_date_str: Opt
 
         logger.info(f"Fetching total call time for period {period}: {query_start_str} to {query_end_str}")
 
-        # Query call_duration field directly
-        query = (
-            supabase.table(config.sessions_table)
-            .select("call_duration")
-            .gte("call_start_time", query_start_str)
-            .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_duration", "null")  # Only sessions with duration data
-        )
+        # Use database-level aggregation via RPC for better performance
+        response = supabase.rpc(
+            'get_total_call_duration',
+            {
+                'start_date_param': query_start_str,
+                'end_date_param': query_end_str
+            }
+        ).execute()
 
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with duration data for total time")
-
-        if not response.data:
-            return 0
-
-        # Sum all durations
-        total_seconds = 0
-        for session in response.data:
-            duration = session.get("call_duration")
-            if duration is not None and duration > 0:
-                total_seconds += duration
-
-        logger.info(f"Total call time: {total_seconds} seconds ({total_seconds / 3600:.2f} hours) from {len(response.data)} calls")
+        total_seconds = int(response.data) if response.data else 0
+        logger.info(f"Total call time: {total_seconds} seconds ({total_seconds / 3600:.2f} hours) (via RPC)")
 
         return total_seconds
     except Exception as e:
@@ -335,45 +357,84 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
         
         logger.info(f"Fetching daily metrics for {metric}, period {period}: {query_start_str} to {query_end_str}")
 
-        # CRITICAL FIX: Make ONE query instead of one per day!
-        # Fetch all data in the date range in a single query
-        # Use call_start_time for accurate date aggregation (not created_at which is ingestion time)
-        query = (
-            supabase.table(config.sessions_table)
-            .select("call_start_time, metadata")
-            .gte("call_start_time", query_start_str)
-            .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-        )
-        
-        response = query.execute()
-        all_sessions = response.data
-        logger.info(f"Fetched {len(all_sessions)} sessions in single query for {metric}")
+        # Use database-level aggregation for total_calls (much faster)
+        if metric == "total_calls":
+            try:
+                # Use RPC for efficient daily call counts
+                response = supabase.rpc(
+                    'get_daily_call_counts',
+                    {
+                        'start_date_param': query_start_str,
+                        'end_date_param': query_end_str
+                    }
+                ).execute()
+
+                # Convert RPC response to the expected format
+                date_groups = {}
+                for row in (response.data or []):
+                    date_str = row['call_date']
+                    date_groups[date_str] = [None] * row['call_count']  # Dummy list for count
+
+                logger.info(f"Fetched {len(date_groups)} days of data via RPC for {metric}")
+
+                # Process the date_groups as before (below)
+                all_sessions = []  # Not needed for RPC path
+            except Exception as rpc_error:
+                logger.warning(f"RPC failed, falling back to pagination: {rpc_error}")
+                # Fallback to pagination if RPC fails
+                query = (
+                    supabase.table(config.sessions_table)
+                    .select("call_start_time, metadata")
+                    .gte("call_start_time", query_start_str)
+                    .lte("call_start_time", query_end_str)
+                    .eq("IS_FALSE", False)
+                )
+                all_sessions = fetch_all_records(query)
+                logger.info(f"Fetched {len(all_sessions)} sessions with pagination for {metric}")
+                date_groups = None  # Will be built below
+        else:
+            # For acceptance_rate and other metrics, use pagination
+            # Fetch all data in the date range in a single query with pagination
+            # Use call_start_time for accurate date aggregation (not created_at which is ingestion time)
+            query = (
+                supabase.table(config.sessions_table)
+                .select("call_start_time, metadata")
+                .gte("call_start_time", query_start_str)
+                .lte("call_start_time", query_end_str)
+                .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            )
+
+            # Use pagination to fetch all records (fixes 1000 record cap)
+            all_sessions = fetch_all_records(query)
+            logger.info(f"Fetched {len(all_sessions)} sessions with pagination for {metric}")
+            date_groups = None  # Will be built below
         
         # FIX 7: Downsample for long periods to reduce payload size
         # For periods > 30 days, use weekly aggregation instead of daily
         days_in_period = (end_date - start_date).days
         aggregation_interval = 7 if days_in_period > 30 else 1  # Weekly if > 30 days, daily otherwise
-        
-        # Simple approach: Group sessions by date string (YYYY-MM-DD)
-        # This avoids all timezone complexity
-        date_groups = defaultdict(list)
 
-        for session in all_sessions:
-            call_start_time_str = session.get("call_start_time")
-            if not call_start_time_str:
-                continue
+        # Build date_groups if not already built (from RPC)
+        if date_groups is None:
+            # Simple approach: Group sessions by date string (YYYY-MM-DD)
+            # This avoids all timezone complexity
+            date_groups = defaultdict(list)
 
-            try:
-                # Extract just the date part (YYYY-MM-DD) from ISO string
-                # Supabase returns: "2025-12-13T21:10:36.123+00:00" or "2025-12-13T21:10:36Z"
-                date_part = call_start_time_str.split("T")[0]  # Get "2025-12-13"
-                date_groups[date_part].append(session)
-            except Exception as e:
-                logger.warning(f"Error extracting date from {call_start_time_str}: {e}")
-                continue
-        
-        logger.info(f"Grouped {len(all_sessions)} sessions into {len(date_groups)} date groups")
+            for session in all_sessions:
+                call_start_time_str = session.get("call_start_time")
+                if not call_start_time_str:
+                    continue
+
+                try:
+                    # Extract just the date part (YYYY-MM-DD) from ISO string
+                    # Supabase returns: "2025-12-13T21:10:36.123+00:00" or "2025-12-13T21:10:36Z"
+                    date_part = call_start_time_str.split("T")[0]  # Get "2025-12-13"
+                    date_groups[date_part].append(session)
+                except Exception as e:
+                    logger.warning(f"Error extracting date from {call_start_time_str}: {e}")
+                    continue
+
+            logger.info(f"Grouped {len(all_sessions)} sessions into {len(date_groups)} date groups")
         
         # Generate date range and aggregate values
         dates = []
@@ -464,12 +525,13 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
             .not_.is_("call_scorecard", "null")
         )
 
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with scorecard data for intents")
+        # Use pagination to fetch all records
+        all_sessions = fetch_all_records(query)
+        logger.info(f"Found {len(all_sessions)} sessions with scorecard data for intents")
 
         intent_counts = {}
 
-        for session in response.data:
+        for session in all_sessions:
             scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 detected_intents = scorecard_data.get("detected_intents", [])
@@ -477,7 +539,7 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
                     for intent in detected_intents:
                         if isinstance(intent, str):
                             intent_counts[intent] = intent_counts.get(intent, 0) + 1
-        
+
         return intent_counts
     except Exception as e:
         logger.error(f"Error fetching call intents: {e}", exc_info=True)
@@ -536,8 +598,9 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
             .not_.is_("call_scorecard", "null")
         )
 
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with scorecard data for sentiment")
+        # Use pagination to fetch all records
+        all_sessions = fetch_all_records(query)
+        logger.info(f"Found {len(all_sessions)} sessions with scorecard data for sentiment")
 
         # Initialize counters for all 7 categories
         sentiment_counts = {
@@ -550,7 +613,7 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
             "positive_to_negative": 0,
         }
 
-        for session in response.data:
+        for session in all_sessions:
             scorecard_data = session.get("call_scorecard", {})
             if isinstance(scorecard_data, dict):
                 # Get the pre-calculated sentiment shift category
@@ -584,7 +647,7 @@ def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_s
 
 def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
     """
-    Get compliance scorecard pass/fail summary.
+    Get compliance scorecard pass/fail summary using database aggregation (RPC).
 
     Works for both:
     - New calls: Uses stored 'pass' field in categories.compliance
@@ -604,52 +667,35 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
 
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
-        config = settings.APP_SETTINGS.supabase
 
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         logger.info(f"Fetching compliance scorecard summary for period {period}")
 
-        query = (
-            supabase.table(config.sessions_table)
-            .select("call_scorecard")
-            .gte("call_start_time", query_start_str)
-            .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard", "null")
-        )
-
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with scorecard data for compliance summary")
-
-        pass_count = 0
-        fail_count = 0
+        # Use database-level aggregation via RPC for better performance
         threshold = SCORECARD_THRESHOLDS['compliance']
+        response = supabase.rpc(
+            'get_compliance_summary',
+            {
+                'start_date_param': query_start_str,
+                'end_date_param': query_end_str,
+                'threshold_param': threshold
+            }
+        ).execute()
 
-        for session in response.data:
-            scorecard_data = session.get("call_scorecard", {})
-            if isinstance(scorecard_data, dict):
-                categories = scorecard_data.get("categories", {})
-                compliance = categories.get("compliance", {})
+        # RPC returns a single row with pass_count, fail_count, total_count
+        if response.data and len(response.data) > 0:
+            result = response.data[0]
+            pass_count = int(result['pass_count'])
+            fail_count = int(result['fail_count'])
+            total_count = int(result['total_count'])
+        else:
+            pass_count = 0
+            fail_count = 0
+            total_count = 0
 
-                if compliance:
-                    # Check if 'pass' field exists (new calls)
-                    if "pass" in compliance:
-                        if compliance["pass"]:
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-                    # Fallback: calculate from score (existing calls)
-                    elif "score" in compliance:
-                        score = compliance["score"]
-                        if score >= threshold:
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-
-        total_count = pass_count + fail_count
-        logger.info(f"Compliance summary: {pass_count} passes, {fail_count} fails out of {total_count} total")
+        logger.info(f"Compliance summary: {pass_count} passes, {fail_count} fails out of {total_count} total (via RPC)")
 
         return {
             "pass_count": pass_count,
@@ -663,7 +709,7 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
 
 def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
     """
-    Get servicing scorecard pass/fail summary.
+    Get servicing scorecard pass/fail summary using database aggregation (RPC).
 
     Works for both:
     - New calls: Uses stored 'pass' field in categories.servicing
@@ -683,52 +729,35 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
 
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
-        config = settings.APP_SETTINGS.supabase
 
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         logger.info(f"Fetching servicing scorecard summary for period {period}")
 
-        query = (
-            supabase.table(config.sessions_table)
-            .select("call_scorecard")
-            .gte("call_start_time", query_start_str)
-            .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard", "null")
-        )
-
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with scorecard data for servicing summary")
-
-        pass_count = 0
-        fail_count = 0
+        # Use database-level aggregation via RPC for better performance
         threshold = SCORECARD_THRESHOLDS['servicing']
+        response = supabase.rpc(
+            'get_servicing_summary',
+            {
+                'start_date_param': query_start_str,
+                'end_date_param': query_end_str,
+                'threshold_param': threshold
+            }
+        ).execute()
 
-        for session in response.data:
-            scorecard_data = session.get("call_scorecard", {})
-            if isinstance(scorecard_data, dict):
-                categories = scorecard_data.get("categories", {})
-                servicing = categories.get("servicing", {})
+        # RPC returns a single row with pass_count, fail_count, total_count
+        if response.data and len(response.data) > 0:
+            result = response.data[0]
+            pass_count = int(result['pass_count'])
+            fail_count = int(result['fail_count'])
+            total_count = int(result['total_count'])
+        else:
+            pass_count = 0
+            fail_count = 0
+            total_count = 0
 
-                if servicing:
-                    # Check if 'pass' field exists (new calls)
-                    if "pass" in servicing:
-                        if servicing["pass"]:
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-                    # Fallback: calculate from score (existing calls)
-                    elif "score" in servicing:
-                        score = servicing["score"]
-                        if score >= threshold:
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-
-        total_count = pass_count + fail_count
-        logger.info(f"Servicing summary: {pass_count} passes, {fail_count} fails out of {total_count} total")
+        logger.info(f"Servicing summary: {pass_count} passes, {fail_count} fails out of {total_count} total (via RPC)")
 
         return {
             "pass_count": pass_count,
@@ -742,7 +771,7 @@ def get_servicing_scorecard_summary(user_id: Optional[str], period: str, start_d
 
 def get_collections_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
     """
-    Get collections scorecard pass/fail summary.
+    Get collections scorecard pass/fail summary using database aggregation (RPC).
 
     Works for both:
     - New calls: Uses stored 'pass' field in categories.collections
@@ -762,52 +791,35 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
 
     try:
         start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
-        config = settings.APP_SETTINGS.supabase
 
         query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         logger.info(f"Fetching collections scorecard summary for period {period}")
 
-        query = (
-            supabase.table(config.sessions_table)
-            .select("call_scorecard")
-            .gte("call_start_time", query_start_str)
-            .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
-            .not_.is_("call_scorecard", "null")
-        )
-
-        response = query.execute()
-        logger.info(f"Found {len(response.data)} sessions with scorecard data for collections summary")
-
-        pass_count = 0
-        fail_count = 0
+        # Use database-level aggregation via RPC for better performance
         threshold = SCORECARD_THRESHOLDS['collections']
+        response = supabase.rpc(
+            'get_collections_summary',
+            {
+                'start_date_param': query_start_str,
+                'end_date_param': query_end_str,
+                'threshold_param': threshold
+            }
+        ).execute()
 
-        for session in response.data:
-            scorecard_data = session.get("call_scorecard", {})
-            if isinstance(scorecard_data, dict):
-                categories = scorecard_data.get("categories", {})
-                collections = categories.get("collections", {})
+        # RPC returns a single row with pass_count, fail_count, total_count
+        if response.data and len(response.data) > 0:
+            result = response.data[0]
+            pass_count = int(result['pass_count'])
+            fail_count = int(result['fail_count'])
+            total_count = int(result['total_count'])
+        else:
+            pass_count = 0
+            fail_count = 0
+            total_count = 0
 
-                if collections:
-                    # Check if 'pass' field exists (new calls)
-                    if "pass" in collections:
-                        if collections["pass"]:
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-                    # Fallback: calculate from score (existing calls)
-                    elif "score" in collections:
-                        score = collections["score"]
-                        if score >= threshold:
-                            pass_count += 1
-                        else:
-                            fail_count += 1
-
-        total_count = pass_count + fail_count
-        logger.info(f"Collections summary: {pass_count} passes, {fail_count} fails out of {total_count} total")
+        logger.info(f"Collections summary: {pass_count} passes, {fail_count} fails out of {total_count} total (via RPC)")
 
         return {
             "pass_count": pass_count,

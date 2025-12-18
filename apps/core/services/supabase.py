@@ -7,7 +7,6 @@ variable cleanup required for Cloud Run deployments.
 """
 from typing import Optional
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions
 from django.conf import settings
 import logging
 import os
@@ -56,18 +55,10 @@ def get_supabase_client() -> Optional[Client]:
     
     try:
         # Proxy env vars already unset at module load, so create client directly
-        # Explicitly set Authorization header to ensure service role bypasses RLS
-        options = ClientOptions(
-            headers={
-                'Authorization': f'Bearer {config.service_role_key}'
-            },
-            auto_refresh_token=False,
-            persist_session=False
-        )
+        # Service role key automatically bypasses RLS in Supabase v1.2.0
         _supabase_client = create_client(
             config.url,
-            config.service_role_key,
-            options=options
+            config.service_role_key
         )
         logger.debug('Supabase client created successfully with service role authorization')
         return _supabase_client
