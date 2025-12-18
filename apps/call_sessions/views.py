@@ -129,6 +129,15 @@ class SessionListView(APIView):
             if max_duration:
                 query = query.lte("call_duration", int(max_duration))
 
+            # Duration filters using call_duration column
+            min_duration = request.query_params.get("minDuration")
+            if min_duration:
+                query = query.gte("call_duration", int(min_duration))
+
+            max_duration = request.query_params.get("maxDuration")
+            if max_duration:
+                query = query.lte("call_duration", int(max_duration))
+
             # Apply sorting
             if sort_order == "desc":
                 query = query.order(sort_by, desc=True)
@@ -185,6 +194,19 @@ class SessionListView(APIView):
                     if session_status_check != status_filter:
                         continue  # Skip this session
 
+                # Apply phone number filter for dialed_number (if caller_number didn't match)
+                phone_number = request.query_params.get("phoneNumber")
+                if phone_number:
+                    caller_match = (
+                        row.get("caller_number", "").lower().find(phone_number.lower())
+                        >= 0
+                    )
+                    dialed_match = (
+                        row.get("dialed_number", "").lower().find(phone_number.lower())
+                        >= 0
+                    )
+                    if not caller_match and not dialed_match:
+                        continue  # Skip if neither matches
                 session_id = row.get("id")
                 # Get turn count from events query or metadata
                 turn_count = turn_counts.get(session_id, 0)
