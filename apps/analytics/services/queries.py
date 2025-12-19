@@ -163,7 +163,7 @@ def get_sessions_count(user_id: Optional[str], period: str, start_date_str: Opti
             .select("id", count="exact")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .eq("IS_FALSE", False)  # Only include valid calls (is_false=FALSE)
         )
 
         # TODO: Add tenant filtering when user_id is provided
@@ -212,7 +212,7 @@ def get_acceptance_rate(user_id: Optional[str], period: str, start_date_str: Opt
             .select("id, metadata")
             .gte("call_start_time", query_start_str)
             .lte("call_start_time", query_end_str)
-            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .eq("IS_FALSE", False)  # Only include valid calls (is_false=FALSE)
         )
 
         # Use pagination to fetch all records
@@ -450,12 +450,24 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
         
         while current <= end_date_only:
             date_str = current.strftime("%Y-%m-%d")
-            
+
             # For weekly aggregation, only include dates at interval boundaries
             if aggregation_interval == 1 or (current - start_date.replace(hour=0, minute=0, second=0, microsecond=0)).days % aggregation_interval == 0:
-                # Get sessions for this date
-                sessions_for_date = date_groups.get(date_str, [])
-                
+                # For weekly aggregation, sum up all sessions from the entire week
+                if aggregation_interval == 7:
+                    # Get sessions for the entire week (7 days starting from current date)
+                    week_sessions = []
+                    for day_offset in range(7):
+                        week_date = current + timedelta(days=day_offset)
+                        if week_date > end_date_only:
+                            break
+                        week_date_str = week_date.strftime("%Y-%m-%d")
+                        week_sessions.extend(date_groups.get(week_date_str, []))
+                    sessions_for_date = week_sessions
+                else:
+                    # For daily aggregation, just get sessions for this specific date
+                    sessions_for_date = date_groups.get(date_str, [])
+
                 if metric == "total_calls":
                     values.append(len(sessions_for_date))
                 elif metric == "acceptance_rate":
@@ -469,9 +481,9 @@ def get_daily_metrics(user_id: Optional[str], period: str, metric: str, start_da
                     values.append(rate)
                 else:
                     values.append(0)
-                
+
                 dates.append(date_str)
-            
+
             current += timedelta(days=1)
         
         # FIX 7: Limit to max 60 points to keep payloads small
