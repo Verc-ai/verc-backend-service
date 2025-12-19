@@ -159,11 +159,12 @@ def get_scorecard_summaries(user, period: str, start_date: Optional[str] = None,
     collections_summary = get_collections_scorecard_summary(user_id, period, start_date, end_date)
     legal_summary = get_legal_scorecard_summary(user_id, period, start_date, end_date)
 
-    # Calculate deltas
-    compliance_delta = _calculate_scorecard_delta(compliance_summary, period, 'compliance', user_id, start_date, end_date)
-    servicing_delta = _calculate_scorecard_delta(servicing_summary, period, 'servicing', user_id, start_date, end_date)
-    collections_delta = _calculate_scorecard_delta(collections_summary, period, 'collections', user_id, start_date, end_date)
-    legal_delta = _calculate_scorecard_delta(legal_summary, period, 'legal', user_id, start_date, end_date)
+    # Calculate deltas - TEMPORARILY DISABLED for performance
+    # TODO: Re-enable after optimizing delta calculation queries
+    compliance_delta = 0.0  # _calculate_scorecard_delta(compliance_summary, period, 'compliance', user_id, start_date, end_date)
+    servicing_delta = 0.0  # _calculate_scorecard_delta(servicing_summary, period, 'servicing', user_id, start_date, end_date)
+    collections_delta = 0.0  # _calculate_scorecard_delta(collections_summary, period, 'collections', user_id, start_date, end_date)
+    legal_delta = 0.0  # _calculate_scorecard_delta(legal_summary, period, 'legal', user_id, start_date, end_date)
 
     # Build response with pass percentages
     def build_summary(summary, delta):
