@@ -4,10 +4,12 @@ Constants for AI services including scorecard thresholds.
 
 # Scorecard pass/fail thresholds
 # A score >= threshold is considered a "pass", < threshold is a "fail"
+# Note: legal uses boolean field (legal_issues_detected), not numeric score
 SCORECARD_THRESHOLDS = {
     'compliance': 40,     # Compliance scorecard must score 40 or above to pass
     'servicing': 40,      # Servicing scorecard must score 40 or above to pass
     'collections': 40,    # Collections scorecard must score 40 or above to pass
+    'legal': 0,           # Legal uses boolean field (added for consistency)
 }
 
 
