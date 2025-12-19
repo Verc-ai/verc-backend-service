@@ -103,8 +103,13 @@ class SessionListView(APIView):
 
             phone_number = request.query_params.get("phoneNumber")
             if phone_number:
-                # Search in caller_number (we'll filter dialed_number in Python if needed)
-                query = query.ilike("caller_number", f"%{phone_number}%")
+                # Search in caller_info (we'll filter dialed_number in Python if needed)
+                query = query.ilike("caller_info", f"%{phone_number}%")
+
+            destination_number = request.query_params.get("destinationNumber")
+            if destination_number:
+                # Search in destination_number column
+                query = query.ilike("destination_number", f"%{destination_number}%")
 
             # Duration filters using call_duration column
             min_duration = request.query_params.get("minDuration")
@@ -171,19 +176,6 @@ class SessionListView(APIView):
                     if session_status_check != status_filter:
                         continue  # Skip this session
 
-                # Apply phone number filter for dialed_number (if caller_number didn't match)
-                phone_number = request.query_params.get("phoneNumber")
-                if phone_number:
-                    caller_match = (
-                        row.get("caller_number", "").lower().find(phone_number.lower())
-                        >= 0
-                    )
-                    dialed_match = (
-                        row.get("dialed_number", "").lower().find(phone_number.lower())
-                        >= 0
-                    )
-                    if not caller_match and not dialed_match:
-                        continue  # Skip if neither matches
                 session_id = row.get("id")
                 # Get turn count from events query or metadata
                 turn_count = turn_counts.get(session_id, 0)
