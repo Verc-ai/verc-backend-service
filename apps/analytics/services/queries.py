@@ -546,6 +546,134 @@ def get_call_intents(user_id: Optional[str], period: str, start_date_str: Option
         return {}
 
 
+def get_action_codes(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
+    """
+    Get aggregated action codes count from call summaries.
+
+    Action codes represent the actions taken during calls (e.g., DT=Disaster Team, TC=Third Call, CO=Collections Outbound).
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+        start_date_str: Optional start date override
+        end_date_str: Optional end date override
+
+    Returns:
+        dict: {action_code: count} (e.g., {"DT": 15, "TC": 23, "CO": 8})
+    """
+    try:
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.error("Supabase client not available")
+            return {}
+
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching action codes for period {period}")
+
+        # Query sessions with call_summary data
+        config = settings.APP_SETTINGS.supabase
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_summary")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_summary", "null")
+        )
+
+        # Add user filtering if provided
+        if user_id:
+            query = query.eq("user_id", user_id)
+
+        # Use pagination to fetch all records
+        all_sessions = fetch_all_records(query)
+        logger.info(f"Found {len(all_sessions)} sessions with call_summary data for action codes")
+
+        action_counts = {}
+
+        for session in all_sessions:
+            summary_data = session.get("call_summary", {})
+            if isinstance(summary_data, dict):
+                action_codes = summary_data.get("action_codes", [])
+                if isinstance(action_codes, list):
+                    for code in action_codes:
+                        if isinstance(code, str):
+                            action_counts[code] = action_counts.get(code, 0) + 1
+
+        logger.info(f"Found {len(action_counts)} unique action codes")
+        return action_counts
+    except Exception as e:
+        logger.error(f"Error fetching action codes: {e}", exc_info=True)
+        return {}
+
+
+def get_result_codes(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
+    """
+    Get aggregated result/outcome codes count from call summaries.
+
+    Result codes represent the outcome of calls (e.g., MP=Made Payment, TT=Transferred to Team, FU=Follow Up Needed).
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+        start_date_str: Optional start date override
+        end_date_str: Optional end date override
+
+    Returns:
+        dict: {result_code: count} (e.g., {"MP": 10, "TT": 8, "FU": 12})
+    """
+    try:
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.error("Supabase client not available")
+            return {}
+
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching result codes for period {period}")
+
+        # Query sessions with call_summary data
+        config = settings.APP_SETTINGS.supabase
+        query = (
+            supabase.table(config.sessions_table)
+            .select("call_summary")
+            .gte("call_start_time", query_start_str)
+            .lte("call_start_time", query_end_str)
+            .eq("IS_FALSE", False)  # Only include valid calls (IS_FALSE=FALSE)
+            .not_.is_("call_summary", "null")
+        )
+
+        # Add user filtering if provided
+        if user_id:
+            query = query.eq("user_id", user_id)
+
+        # Use pagination to fetch all records
+        all_sessions = fetch_all_records(query)
+        logger.info(f"Found {len(all_sessions)} sessions with call_summary data for result codes")
+
+        result_counts = {}
+
+        for session in all_sessions:
+            summary_data = session.get("call_summary", {})
+            if isinstance(summary_data, dict):
+                result_codes = summary_data.get("result_codes", [])
+                if isinstance(result_codes, list):
+                    for code in result_codes:
+                        if isinstance(code, str):
+                            result_counts[code] = result_counts.get(code, 0) + 1
+
+        logger.info(f"Found {len(result_counts)} unique result codes")
+        return result_counts
+    except Exception as e:
+        logger.error(f"Error fetching result codes: {e}", exc_info=True)
+        return {}
+
+
 def get_sentiment_distribution(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
     """
     Get sentiment distribution with shift tracking.
@@ -675,6 +803,7 @@ def get_compliance_scorecard_summary(user_id: Optional[str], period: str, start_
 
         # Use database-level aggregation via RPC for better performance
         threshold = SCORECARD_THRESHOLDS['compliance']
+        logger.info(f"DEBUG: Using compliance threshold = {threshold}")
         response = supabase.rpc(
             'get_compliance_summary',
             {

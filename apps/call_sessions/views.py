@@ -106,6 +106,15 @@ class SessionListView(APIView):
                 # Search in caller_number (we'll filter dialed_number in Python if needed)
                 query = query.ilike("caller_number", f"%{phone_number}%")
 
+            # Duration filters using call_duration column
+            min_duration = request.query_params.get("minDuration")
+            if min_duration:
+                query = query.gte("call_duration", int(min_duration))
+
+            max_duration = request.query_params.get("maxDuration")
+            if max_duration:
+                query = query.lte("call_duration", int(max_duration))
+
             # Apply sorting
             if sort_order == "desc":
                 query = query.order(sort_by, desc=True)
@@ -161,21 +170,6 @@ class SessionListView(APIView):
 
                     if session_status_check != status_filter:
                         continue  # Skip this session
-
-                # Apply duration filters if specified
-                min_duration = request.query_params.get("minDuration")
-                max_duration = request.query_params.get("maxDuration")
-
-                # Calculate duration using helper function
-                duration = calculate_session_duration(
-                    row.get("created_at"), row.get("last_event_received_at")
-                )
-
-                # Apply duration filters
-                if min_duration and (duration is None or duration < int(min_duration)):
-                    continue
-                if max_duration and duration and duration > int(max_duration):
-                    continue
 
                 # Apply phone number filter for dialed_number (if caller_number didn't match)
                 phone_number = request.query_params.get("phoneNumber")
@@ -582,4 +576,99 @@ class GenerateScorecardView(APIView):
             return Response(
                 {"success": False, "error": str(e), "sessionId": session_id},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class UpdateSessionNotesView(APIView):
+    """
+    PATCH /api/sessions/{id}/notes
+    Update call notes for a session by merging into call_summary JSONB field.
+    """
+    permission_classes = [AllowAny]
+
+    def patch(self, request, session_id):
+        """
+        Update the notes field in call_summary for a session.
+
+        Request body:
+            {
+                "notes": "Updated call notes text..."
+            }
+
+        Returns:
+            200: {success: true, message: "...", session_id: "...", notes: "..."}
+            400: {error: "Notes field is required"}
+            404: {error: "Session not found"}
+            500: {error: "Failed to update notes: ..."}
+        """
+        # Validate request data
+        notes = request.data.get('notes')
+        if notes is None:
+            return Response(
+                {"error": "Notes field is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+        if not supabase:
+            logger.error("Supabase client not available")
+            return Response(
+                {"error": "Storage service not available"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        try:
+            config = settings.APP_SETTINGS.supabase
+            logger.info(f"Updating notes for session: {session_id}")
+
+            # Fetch existing session to get current call_summary
+            session_response = (
+                supabase.table(config.sessions_table)
+                .select("call_summary")
+                .eq("id", session_id)
+                .single()
+                .execute()
+            )
+
+            if not session_response.data:
+                logger.warning(f"Session not found: {session_id}")
+                return Response(
+                    {"error": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get existing call_summary or initialize as empty dict
+            existing_summary = session_response.data.get('call_summary') or {}
+            if not isinstance(existing_summary, dict):
+                existing_summary = {}
+
+            # Update notes field while preserving other fields
+            existing_summary['notes'] = notes
+
+            # Update database with merged call_summary
+            update_response = (
+                supabase.table(config.sessions_table)
+                .update({'call_summary': existing_summary})
+                .eq('id', session_id)
+                .execute()
+            )
+
+            logger.info(f"Successfully updated notes for session {session_id}")
+
+            return Response(
+                {
+                    "success": True,
+                    "message": "Notes updated successfully",
+                    "session_id": session_id,
+                    "notes": notes
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to update notes for session {session_id}: {e}", exc_info=True)
+            return Response(
+                {"error": f"Failed to update notes: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
