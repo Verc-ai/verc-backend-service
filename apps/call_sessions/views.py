@@ -120,6 +120,15 @@ class SessionListView(APIView):
             if max_duration:
                 query = query.lte("call_duration", int(max_duration))
 
+            # Duration filters using call_duration column
+            min_duration = request.query_params.get("minDuration")
+            if min_duration:
+                query = query.gte("call_duration", int(min_duration))
+
+            max_duration = request.query_params.get("maxDuration")
+            if max_duration:
+                query = query.lte("call_duration", int(max_duration))
+
             # Apply sorting
             if sort_order == "desc":
                 query = query.order(sort_by, desc=True)
