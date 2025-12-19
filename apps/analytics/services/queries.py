@@ -960,6 +960,70 @@ def get_collections_scorecard_summary(user_id: Optional[str], period: str, start
         return {"pass_count": 0, "fail_count": 0, "total_count": 0}
 
 
+def get_legal_scorecard_summary(user_id: Optional[str], period: str, start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> Dict[str, int]:
+    """
+    Get legal scorecard pass/fail summary using database aggregation (RPC).
+
+    Legal scorecard is based on legal_issues_detected boolean field:
+    - Pass: legal_issues_detected = false (no legal risk)
+    - Fail: legal_issues_detected = true (legal review required)
+
+    Args:
+        user_id: User ID for tenant filtering (optional)
+        period: Time period string
+        start_date_str: Optional ISO date string for custom range
+        end_date_str: Optional ISO date string for custom range
+
+    Returns:
+        dict: {"pass_count": int, "fail_count": int, "total_count": int}
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        logger.warning("Supabase client not available")
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+    try:
+        start_date, end_date = get_period_dates(period, start_date_str, end_date_str)
+
+        query_start_str = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        query_end_str = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Fetching legal scorecard summary for period {period}")
+
+        # Use database-level aggregation via RPC for better performance
+        threshold = SCORECARD_THRESHOLDS['legal']  # 0, not used but included for consistency
+        response = supabase.rpc(
+            'get_legal_summary',
+            {
+                'start_date_param': query_start_str,
+                'end_date_param': query_end_str,
+                'threshold_param': threshold
+            }
+        ).execute()
+
+        # RPC returns a single row with pass_count, fail_count, total_count
+        if response.data and len(response.data) > 0:
+            result = response.data[0]
+            pass_count = int(result['pass_count'])
+            fail_count = int(result['fail_count'])
+            total_count = int(result['total_count'])
+        else:
+            pass_count = 0
+            fail_count = 0
+            total_count = 0
+
+        logger.info(f"Legal summary: {pass_count} passes (no legal risk), {fail_count} fails (legal risk detected) out of {total_count} total (via RPC)")
+
+        return {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "total_count": total_count,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching legal scorecard summary: {e}", exc_info=True)
+        return {"pass_count": 0, "fail_count": 0, "total_count": 0}
+
+
 def _calculate_scorecard_delta(current_summary: Dict[str, int], period: str, scorecard_type: str, user_id: Optional[str], start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> float:
     """
     Calculate period-over-period delta for scorecard pass counts.

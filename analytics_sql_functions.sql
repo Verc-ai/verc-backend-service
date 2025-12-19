@@ -190,7 +190,43 @@ END;
 $$;
 
 -- =============================================================================
--- 7. Get Sentiment Distribution
+-- 7. Get Legal Scorecard Summary
+-- =============================================================================
+CREATE OR REPLACE FUNCTION get_legal_summary(
+    start_date_param TIMESTAMPTZ,
+    end_date_param TIMESTAMPTZ,
+    threshold_param NUMERIC DEFAULT 0  -- Not used for legal (boolean field), but included for consistency
+)
+RETURNS TABLE(
+    pass_count BIGINT,
+    fail_count BIGINT,
+    total_count BIGINT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        COUNT(*) FILTER (
+            WHERE
+                (call_scorecard->>'legal_issues_detected')::boolean = false
+        ) as pass_count,
+        COUNT(*) FILTER (
+            WHERE
+                (call_scorecard->>'legal_issues_detected')::boolean = true
+        ) as fail_count,
+        COUNT(*) as total_count
+    FROM transcription_sessions
+    WHERE call_start_time >= start_date_param
+      AND call_start_time <= end_date_param
+      AND "IS_FALSE" = FALSE
+      AND call_scorecard IS NOT NULL
+      AND call_scorecard->>'legal_issues_detected' IS NOT NULL;
+END;
+$$;
+
+-- =============================================================================
+-- 8. Get Sentiment Distribution
 -- =============================================================================
 CREATE OR REPLACE FUNCTION get_sentiment_distribution(
     start_date_param TIMESTAMPTZ,
@@ -225,6 +261,7 @@ $$;
 -- GRANT EXECUTE ON FUNCTION get_compliance_summary TO authenticated;
 -- GRANT EXECUTE ON FUNCTION get_servicing_summary TO authenticated;
 -- GRANT EXECUTE ON FUNCTION get_collections_summary TO authenticated;
+-- GRANT EXECUTE ON FUNCTION get_legal_summary TO authenticated;
 -- GRANT EXECUTE ON FUNCTION get_sentiment_distribution TO authenticated;
 
 -- =============================================================================
@@ -233,7 +270,8 @@ $$;
 -- SELECT * FROM get_avg_call_duration('2025-01-01'::timestamptz, NOW()::timestamptz);
 -- SELECT * FROM get_total_call_duration('2025-01-01'::timestamptz, NOW()::timestamptz);
 -- SELECT * FROM get_daily_call_counts('2025-01-01'::timestamptz, NOW()::timestamptz);
--- SELECT * FROM get_compliance_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 80);
--- SELECT * FROM get_servicing_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 70);
--- SELECT * FROM get_collections_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 75);
+-- SELECT * FROM get_compliance_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 40);
+-- SELECT * FROM get_servicing_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 40);
+-- SELECT * FROM get_collections_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 40);
+-- SELECT * FROM get_legal_summary('2025-01-01'::timestamptz, NOW()::timestamptz, 0);
 -- SELECT * FROM get_sentiment_distribution('2025-01-01'::timestamptz, NOW()::timestamptz);
