@@ -16,7 +16,7 @@ from rest_framework.permissions import AllowAny
 from django.conf import settings
 
 from apps.core.services.supabase import get_supabase_client
-from apps.core.utils import format_timestamp
+from apps.core.utils import format_timestamp, retry_on_exception
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +496,28 @@ class SignedUrlView(APIView):
 
     permission_classes = [AllowAny]  # Allow access with mock tokens
 
+    @staticmethod
+    @retry_on_exception(max_attempts=3, backoff_base=0.5)
+    def _create_signed_url_with_retry(supabase, bucket: str, storage_path: str, expires_in: int):
+        """
+        Create signed URL with retry logic for transient failures.
+
+        This method is wrapped with retry decorator to handle:
+        - Connection timeouts
+        - Network errors
+        - Cold-start Supabase Storage API delays
+
+        Args:
+            supabase: Supabase client instance
+            bucket: Storage bucket name
+            storage_path: Path to file in storage
+            expires_in: URL expiration time in seconds
+
+        Returns:
+            Signed URL response from Supabase
+        """
+        return supabase.storage.from_(bucket).create_signed_url(storage_path, expires_in=expires_in)
+
     def get(self, request):
         storage_path = request.query_params.get("storagePath", "")
         logger.info(f"Requesting signed URL for: {storage_path}")
@@ -518,9 +540,9 @@ class SignedUrlView(APIView):
             config = settings.APP_SETTINGS.supabase
             bucket = config.audio_bucket
 
-            # Generate signed URL (1 hour expiry)
-            signed_url_response = supabase.storage.from_(bucket).create_signed_url(
-                storage_path, expires_in=3600  # 1 hour
+            # Generate signed URL (1 hour expiry) with automatic retry on failures
+            signed_url_response = self._create_signed_url_with_retry(
+                supabase, bucket, storage_path, expires_in=3600
             )
 
             # Debug logging to see actual response format
