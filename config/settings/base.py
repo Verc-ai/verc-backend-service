@@ -72,7 +72,11 @@ class AIConfig(BaseModel):
     assemblyai_pii_redaction_enabled: bool = False
     assemblyai_pii_substitution: str = "hash"
     assemblyai_generate_redacted_audio: bool = False
-    
+
+    # Modal (NVIDIA Canary)
+    modal_app_name: str = "nvidia_canary_qwen"
+    modal_enabled: bool = True
+
     # LandingAI
     landingai_api_key: str = ""
     
