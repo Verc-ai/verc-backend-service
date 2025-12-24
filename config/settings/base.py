@@ -76,6 +76,8 @@ class AIConfig(BaseModel):
     # Modal (NVIDIA Canary)
     modal_app_name: str = "nvidia_canary_qwen"
     modal_enabled: bool = True
+    modal_token_id: str = ""  # For production/GCP deployment
+    modal_token_secret: str = ""  # For production/GCP deployment
 
     # LandingAI
     landingai_api_key: str = ""

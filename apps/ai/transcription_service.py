@@ -245,6 +245,8 @@ class ModalCanaryProvider:
 
     def __init__(self):
         """Initialize Modal client."""
+        import os
+
         config = settings.APP_SETTINGS.ai
 
         if not config.modal_enabled:
@@ -254,6 +256,15 @@ class ModalCanaryProvider:
             raise ValueError("Modal app name not configured")
 
         self.modal_app_name = config.modal_app_name
+
+        # Set Modal authentication environment variables for production/GCP
+        # Modal SDK automatically uses MODAL_TOKEN_ID and MODAL_TOKEN_SECRET from env vars
+        if config.modal_token_id and config.modal_token_secret:
+            os.environ['MODAL_TOKEN_ID'] = config.modal_token_id
+            os.environ['MODAL_TOKEN_SECRET'] = config.modal_token_secret
+            logger.info('Modal authentication configured via environment variables (production mode)')
+        else:
+            logger.info('Modal authentication using local credentials (~/.modal/)')
 
         logger.info(
             f'Modal Canary provider initialized: '
