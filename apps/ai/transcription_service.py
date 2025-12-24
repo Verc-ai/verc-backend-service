@@ -2,7 +2,7 @@
 Transcription service using AssemblyAI for audio transcription with speaker diarization.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from django.conf import settings
 import assemblyai as aai
 
@@ -237,20 +237,207 @@ class AssemblyAIProvider:
         return turns
 
 
-def get_transcription_service() -> Optional[AssemblyAIProvider]:
+class ModalCanaryProvider:
+    """
+    Modal NVIDIA Canary transcription provider with speaker diarization and PII redaction.
+    Uses Modal Labs serverless platform to run NVIDIA Canary Qwen 2.5B STT model.
+    """
+
+    def __init__(self):
+        """Initialize Modal client."""
+        config = settings.APP_SETTINGS.ai
+
+        if not config.modal_enabled:
+            raise ValueError("Modal provider is not enabled")
+
+        if not config.modal_app_name:
+            raise ValueError("Modal app name not configured")
+
+        self.modal_app_name = config.modal_app_name
+
+        logger.info(
+            f'Modal Canary provider initialized: '
+            f'app_name={self.modal_app_name}'
+        )
+
+    def is_ready(self) -> bool:
+        """Check if provider is ready to use."""
+        config = settings.APP_SETTINGS.ai
+        return config.modal_enabled and bool(config.modal_app_name)
+
+    def transcribe_with_diarization(
+        self,
+        audio_url: str,
+        speaker_mapping: Optional[Dict[str, str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Transcribe audio with speaker diarization using Modal NVIDIA Canary.
+
+        Args:
+            audio_url: URL to the audio file (signed URL from Supabase Storage)
+            speaker_mapping: Optional mapping of speaker labels (e.g., {'Speaker1': 'agent', 'Speaker2': 'customer'})
+
+        Returns:
+            List of conversation turns with speaker, text, timestamps, etc.
+        """
+        import modal
+        import httpx
+        import soundfile as sf
+        import tempfile
+        import os
+
+        if not self.is_ready():
+            raise ValueError("Modal provider not initialized")
+
+        if not speaker_mapping:
+            speaker_mapping = {'Speaker1': 'agent', 'Speaker2': 'customer'}
+
+        logger.info(f'Starting Modal Canary transcription: audio_url={audio_url[:100]}...')
+
+        try:
+            # Step 1: Download audio file from signed URL
+            logger.info(f'Downloading audio from signed URL...')
+            response = httpx.get(audio_url, timeout=60.0)
+            response.raise_for_status()
+
+            # Step 2: Save to temporary file and read with soundfile
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                temp_file.write(response.content)
+                temp_path = temp_file.name
+
+            try:
+                logger.info(f'Reading audio file with soundfile...')
+                audio_array, sample_rate = sf.read(temp_path)
+
+                # Step 3: Call Modal NVIDIA Canary model
+                logger.info(f'Calling Modal Canary model: app={self.modal_app_name}')
+                CanaryModel = modal.Cls.from_name(self.modal_app_name, "CanaryModel")
+                model = CanaryModel()
+
+                result = model.transcribe.remote({
+                    "array": audio_array.tolist(),  # Convert numpy array to list for serialization
+                    "sampling_rate": int(sample_rate)
+                })
+
+                logger.info(f'Modal transcription completed: {len(result.get("segments", []))} segments')
+
+                # Step 4: Convert to conversation turns format
+                turns = self._convert_to_conversation_turns(result, speaker_mapping)
+
+                return turns
+
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+
+        except Exception as e:
+            logger.error(f'Failed to transcribe audio with Modal: {e}', exc_info=True)
+            raise
+
+    def _convert_to_conversation_turns(
+        self,
+        modal_result: Dict[str, Any],
+        speaker_mapping: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert Modal Canary result to conversation turns format.
+
+        Args:
+            modal_result: Modal result with 'full_text' and 'segments'
+            speaker_mapping: Mapping of speaker labels to roles
+
+        Returns:
+            List of conversation turns
+        """
+        segments = modal_result.get('segments', [])
+
+        if not segments:
+            logger.warning('No segments found in Modal transcription')
+            return []
+
+        turns = []
+
+        for segment in segments:
+            # Extract segment data
+            speaker_label = segment.get('speaker', 'unknown')
+            speaker_role = speaker_mapping.get(speaker_label, 'unknown')
+
+            # Convert timestamps from seconds to milliseconds
+            start_time_ms = int(segment.get('start', 0) * 1000)
+            end_time_ms = int(segment.get('end', 0) * 1000)
+            duration_ms = end_time_ms - start_time_ms
+
+            turn = {
+                'speaker': speaker_role,
+                'text': segment.get('text', ''),
+                'timestamp': None,  # Will be set based on start_time_ms in the view
+                'start_time_ms': start_time_ms,
+                'end_time_ms': end_time_ms,
+                'duration_ms': duration_ms,
+                'confidence': None,  # Modal doesn't provide confidence scores
+                'sentiment': None,  # Modal doesn't provide sentiment (handled by OpenAI later)
+                'pii_redacted': True,  # Modal does PII redaction with <PERSON>, <DATE_TIME> tags
+                'pii_entities_detected': self._extract_pii_entities(segment.get('text', '')),
+                'metadata': {
+                    'speaker_label': speaker_label,
+                    'provider': 'modal_canary'
+                }
+            }
+
+            turns.append(turn)
+
+        logger.info(f'Converted {len(turns)} Modal segments to conversation turns')
+        return turns
+
+    def _extract_pii_entities(self, text: str) -> Optional[List[str]]:
+        """
+        Extract PII entity types from redacted text with tags like <PERSON>, <DATE_TIME>.
+
+        Args:
+            text: Text with PII tags
+
+        Returns:
+            List of detected PII entity types, or None if none found
+        """
+        import re
+
+        # Find all PII tags in the text
+        pii_tags = re.findall(r'<([A-Z_]+)>', text)
+
+        if not pii_tags:
+            return None
+
+        # Return unique tags
+        return list(set(pii_tags))
+
+
+def get_transcription_service() -> Optional[Union[ModalCanaryProvider, AssemblyAIProvider]]:
     """
     Get transcription service instance.
-    
+    Prioritizes Modal NVIDIA Canary if enabled, falls back to AssemblyAI.
+
     Returns:
-        AssemblyAIProvider instance if configured, None otherwise
+        ModalCanaryProvider if Modal is enabled and configured,
+        AssemblyAIProvider if Modal is disabled but AssemblyAI is configured,
+        None if neither provider is configured
     """
     try:
         config = settings.APP_SETTINGS.ai
-        if not config.assemblyai_api_key:
-            logger.warning('AssemblyAI API key not configured')
-            return None
-        
-        return AssemblyAIProvider()
+
+        # Prioritize Modal if enabled
+        if config.modal_enabled and config.modal_app_name:
+            logger.info('Using Modal NVIDIA Canary transcription provider')
+            return ModalCanaryProvider()
+
+        # Fall back to AssemblyAI
+        if config.assemblyai_api_key:
+            logger.info('Using AssemblyAI transcription provider')
+            return AssemblyAIProvider()
+
+        logger.warning('No transcription provider configured (Modal and AssemblyAI both disabled)')
+        return None
+
     except Exception as e:
         logger.error(f'Failed to create transcription service: {e}')
         return None
