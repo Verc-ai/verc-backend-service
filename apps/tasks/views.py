@@ -237,7 +237,36 @@ class TranscribeAudioView(APIView):
                 if text:
                     full_transcript_lines.append(f"{speaker}: {text}")
             full_transcript = '\n'.join(full_transcript_lines)
-            
+
+            # Build segments JSON (Modal format) for dedicated column storage
+            segments_json = []
+            pii_redacted = False
+            for turn in turns:
+                # Convert speaker role back to Speaker1/Speaker2 format for storage
+                speaker_role = turn.get('speaker', 'unknown')
+                if speaker_role == 'agent':
+                    speaker_label = 'Speaker1'
+                elif speaker_role == 'customer':
+                    speaker_label = 'Speaker2'
+                else:
+                    speaker_label = speaker_role
+
+                # Convert milliseconds to seconds for Modal format
+                start_seconds = turn.get('start_time_ms', 0) / 1000.0 if turn.get('start_time_ms') else 0.0
+                end_seconds = turn.get('end_time_ms', 0) / 1000.0 if turn.get('end_time_ms') else 0.0
+
+                segment = {
+                    'speaker': speaker_label,
+                    'start': start_seconds,
+                    'end': end_seconds,
+                    'text': turn.get('text', '')
+                }
+                segments_json.append(segment)
+
+                # Check if any turn has PII redaction
+                if turn.get('pii_redacted', False):
+                    pii_redacted = True
+
             events = []
             
             for idx, turn in enumerate(turns):
@@ -405,11 +434,17 @@ class TranscribeAudioView(APIView):
             
             # Remove None values but keep 0, False, and empty strings
             updated_metadata = {k: v for k, v in updated_metadata.items() if v is not None}
-            
-            result = supabase.table(table_name).update({
+
+            # Prepare session update with dedicated columns for transcript, segments, and PII status
+            session_update = {
                 'status': 'transcribed',
-                'metadata': updated_metadata
-            }).eq('id', session_id).execute()
+                'metadata': updated_metadata,
+                'transcript': full_transcript,  # Store full transcript text in dedicated column
+                'segments': segments_json,  # Store segments JSON in dedicated column (Modal format)
+                'pii_redacted': pii_redacted  # Store PII redaction status in dedicated column
+            }
+
+            result = supabase.table(table_name).update(session_update).eq('id', session_id).execute()
             
             print(f'[TASK] ✅ Updated session {session_id} status to transcribed with metadata summary', file=sys.stderr, flush=True)
             logger.info(f'Updated session {session_id} status to transcribed with {len(turns)} turns')
