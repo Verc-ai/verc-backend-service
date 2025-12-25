@@ -22,6 +22,15 @@ env = environ.Env(
 # Read .env file if it exists
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
+# IMPORTANT: Modal authentication
+# Modal SDK requires env vars to be set BEFORE it's imported
+# These are loaded from .env and explicitly set here for Modal SDK
+modal_token_id = env('MODAL_TOKEN_ID', default='')
+modal_token_secret = env('MODAL_TOKEN_SECRET', default='')
+if modal_token_id and modal_token_secret:
+    os.environ['MODAL_TOKEN_ID'] = modal_token_id
+    os.environ['MODAL_TOKEN_SECRET'] = modal_token_secret
+
 
 class DatabaseConfig(BaseModel):
     """Database configuration."""
@@ -190,6 +199,10 @@ class AppSettings:
             assemblyai_pii_redaction_enabled=env.bool('ASSEMBLYAI_PII_REDACTION_ENABLED', default=False),
             assemblyai_pii_substitution=env('ASSEMBLYAI_PII_SUBSTITUTION', default='hash'),
             assemblyai_generate_redacted_audio=env.bool('ASSEMBLYAI_GENERATE_REDACTED_AUDIO', default=False),
+            modal_app_name=env('MODAL_APP_NAME', default='nvidia_canary_qwen'),
+            modal_enabled=env.bool('MODAL_ENABLED', default=True),
+            modal_token_id=env('MODAL_TOKEN_ID', default=''),
+            modal_token_secret=env('MODAL_TOKEN_SECRET', default=''),
             landingai_api_key=env('LANDINGAI_API_KEY', default=''),
             primary_provider=env('AI_PRIMARY_PROVIDER', default='openai'),
             fallback_provider=env('AI_FALLBACK_PROVIDER', default=''),

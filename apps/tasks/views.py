@@ -181,7 +181,7 @@ class TranscribeAudioView(APIView):
             logger.info(f'Calling AssemblyAI transcription for session {session_id}')
             
             try:
-                turns = transcription_service.transcribe_with_diarization(
+                transcription_result = transcription_service.transcribe_with_diarization(
                     audio_url=signed_url,
                     speaker_mapping=speaker_mapping
                 )
@@ -190,12 +190,21 @@ class TranscribeAudioView(APIView):
                 logger.error(error_msg, exc_info=True)
                 print(f'[TASK] ❌ {error_msg}', file=sys.stderr, flush=True)
                 raise Exception(error_msg)
-            
+
+            # Handle new dict format or legacy list format (for backwards compatibility)
+            if isinstance(transcription_result, dict):
+                turns = transcription_result.get('turns', [])
+                duration_seconds = transcription_result.get('duration_seconds')
+            else:
+                # Legacy format: just a list of turns
+                turns = transcription_result
+                duration_seconds = None
+
             if not turns:
                 raise Exception('No transcription turns returned from AssemblyAI - transcription may have failed silently')
-            
-            print(f'[TASK] ✅ Transcription completed: {len(turns)} turns', file=sys.stderr, flush=True)
-            logger.info(f'Transcription completed: {len(turns)} turns for session {session_id}')
+
+            print(f'[TASK] ✅ Transcription completed: {len(turns)} turns, duration: {duration_seconds}s', file=sys.stderr, flush=True)
+            logger.info(f'Transcription completed: {len(turns)} turns, duration: {duration_seconds}s for session {session_id}')
             
             # Step 3: Fetch session metadata to include in event payloads (matches old backend structure)
             print(f'[TASK] Fetching session metadata for event payloads...', file=sys.stderr, flush=True)
@@ -241,15 +250,14 @@ class TranscribeAudioView(APIView):
             # Build segments JSON (Modal format) for dedicated column storage
             segments_json = []
             pii_redacted = False
+            unique_speakers = set()  # Track unique speakers for speaker_count
+
             for turn in turns:
-                # Convert speaker role back to Speaker1/Speaker2 format for storage
-                speaker_role = turn.get('speaker', 'unknown')
-                if speaker_role == 'agent':
-                    speaker_label = 'Speaker1'
-                elif speaker_role == 'customer':
-                    speaker_label = 'Speaker2'
-                else:
-                    speaker_label = speaker_role
+                # Speaker is already in Modal's format (Speaker1, Speaker2) - no mapping needed
+                speaker_label = turn.get('speaker', 'unknown')
+
+                # Track unique speakers
+                unique_speakers.add(speaker_label)
 
                 # Convert milliseconds to seconds for Modal format
                 start_seconds = turn.get('start_time_ms', 0) / 1000.0 if turn.get('start_time_ms') else 0.0
@@ -266,6 +274,10 @@ class TranscribeAudioView(APIView):
                 # Check if any turn has PII redaction
                 if turn.get('pii_redacted', False):
                     pii_redacted = True
+
+            # Calculate speaker count
+            speaker_count = len(unique_speakers)
+            logger.info(f'Detected {speaker_count} unique speakers: {unique_speakers}')
 
             events = []
             
@@ -441,8 +453,16 @@ class TranscribeAudioView(APIView):
                 'metadata': updated_metadata,
                 'transcript': full_transcript,  # Store full transcript text in dedicated column
                 'segments': segments_json,  # Store segments JSON in dedicated column (Modal format)
-                'pii_redacted': pii_redacted  # Store PII redaction status in dedicated column
+                'pii_redacted': pii_redacted,  # Store PII redaction status in dedicated column
+                'speaker_count': speaker_count  # Store number of unique speakers detected
             }
+
+            # Add call_duration if available (from transcription service)
+            if duration_seconds is not None:
+                session_update['call_duration'] = duration_seconds
+                logger.info(f'Storing call duration: {duration_seconds}s for session {session_id}')
+
+            logger.info(f'Storing {speaker_count} speakers, {len(turns)} turns, duration: {duration_seconds}s')
 
             result = supabase.table(table_name).update(session_update).eq('id', session_id).execute()
             

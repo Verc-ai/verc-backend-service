@@ -147,8 +147,22 @@ class AssemblyAIProvider:
                 transcript,
                 speaker_mapping
             )
-            
-            return turns
+
+            # AssemblyAI provides audio_duration in transcript object (in seconds)
+            duration_seconds = None
+            if hasattr(transcript, 'audio_duration') and transcript.audio_duration:
+                duration_seconds = round(transcript.audio_duration, 2)
+                logger.info(f'Audio duration from AssemblyAI: {duration_seconds}s')
+
+            # Return in same format as Modal provider
+            return {
+                'turns': turns,
+                'duration_seconds': duration_seconds,
+                'audio_metadata': {
+                    'provider': 'assemblyai',
+                    'transcript_id': transcript.id if hasattr(transcript, 'id') else None
+                }
+            }
             
         except Exception as e:
             logger.error(f'Failed to transcribe audio: {e}', exc_info=True)
@@ -245,8 +259,6 @@ class ModalCanaryProvider:
 
     def __init__(self):
         """Initialize Modal client."""
-        import os
-
         config = settings.APP_SETTINGS.ai
 
         if not config.modal_enabled:
@@ -257,15 +269,8 @@ class ModalCanaryProvider:
 
         self.modal_app_name = config.modal_app_name
 
-        # Set Modal authentication environment variables for production/GCP
-        # Modal SDK automatically uses MODAL_TOKEN_ID and MODAL_TOKEN_SECRET from env vars
-        if config.modal_token_id and config.modal_token_secret:
-            os.environ['MODAL_TOKEN_ID'] = config.modal_token_id
-            os.environ['MODAL_TOKEN_SECRET'] = config.modal_token_secret
-            logger.info('Modal authentication configured via environment variables (production mode)')
-        else:
-            logger.info('Modal authentication using local credentials (~/.modal/)')
-
+        # Modal authentication is set at Django startup in settings/base.py
+        # This ensures Modal SDK loads with correct workspace/auth before any imports
         logger.info(
             f'Modal Canary provider initialized: '
             f'app_name={self.modal_app_name}'
@@ -300,8 +305,9 @@ class ModalCanaryProvider:
         if not self.is_ready():
             raise ValueError("Modal provider not initialized")
 
+        # Don't assume speaker roles - keep Modal's labels as-is
         if not speaker_mapping:
-            speaker_mapping = {'Speaker1': 'agent', 'Speaker2': 'customer'}
+            speaker_mapping = {'Speaker1': 'Speaker1', 'Speaker2': 'Speaker2'}
 
         logger.info(f'Starting Modal Canary transcription: audio_url={audio_url[:100]}...')
 
@@ -320,22 +326,70 @@ class ModalCanaryProvider:
                 logger.info(f'Reading audio file with soundfile...')
                 audio_array, sample_rate = sf.read(temp_path)
 
+                # Calculate audio duration in seconds
+                duration_seconds = len(audio_array) / sample_rate
+                logger.info(f'Audio duration: {duration_seconds:.2f} seconds')
+
                 # Step 3: Call Modal NVIDIA Canary model
                 logger.info(f'Calling Modal Canary model: app={self.modal_app_name}')
-                CanaryModel = modal.Cls.from_name(self.modal_app_name, "CanaryModel")
-                model = CanaryModel()
 
-                result = model.transcribe.remote({
-                    "array": audio_array.tolist(),  # Convert numpy array to list for serialization
-                    "sampling_rate": int(sample_rate)
-                })
+                # Debug: Check Modal config
+                import os as debug_os
+                logger.info(f'Modal profile: {debug_os.getenv("MODAL_PROFILE")}')
+
+                # Modal profile is set globally in Django settings (config/settings/base.py)
+                # This ensures Modal SDK uses the correct credentials from ~/.modal.toml
+
+                # Try to lookup the app first, then get the class
+                # With MODAL_PROFILE set, Modal SDK will use credentials from ~/.modal.toml
+                try:
+                    CanaryModel = modal.Cls.from_name(
+                        self.modal_app_name,
+                        "CanaryModel"
+                    )
+                    logger.info(f'Modal app lookup result: {CanaryModel}')
+                    logger.info(f'Modal app type: {type(CanaryModel)}')
+                except Exception as lookup_error:
+                    logger.error(f'Failed to lookup Modal app: {lookup_error}', exc_info=True)
+                    raise Exception(f"Modal app lookup failed: {lookup_error}")
+
+                if CanaryModel is None:
+                    raise Exception(f"Modal app '{self.modal_app_name}' returned None. Check app name and authentication.")
+
+                # Instantiate the Modal class
+                try:
+                    model = CanaryModel()
+                    logger.info(f'Modal model instance: {model}')
+                    logger.info(f'Modal model type: {type(model)}')
+                    logger.info(f'Modal model.transcribe: {model.transcribe}')
+                except Exception as instantiation_error:
+                    logger.error(f'Failed to instantiate Modal class: {instantiation_error}', exc_info=True)
+                    raise Exception(f"Modal class instantiation failed: {instantiation_error}")
+
+                # Call the transcribe method
+                try:
+                    result = model.transcribe.remote({
+                        "array": audio_array.tolist(),  # Convert numpy array to list for serialization
+                        "sampling_rate": int(sample_rate)
+                    })
+                except Exception as remote_error:
+                    logger.error(f'Failed to call Modal remote method: {remote_error}', exc_info=True)
+                    raise Exception(f"Modal remote call failed: {remote_error}")
 
                 logger.info(f'Modal transcription completed: {len(result.get("segments", []))} segments')
 
                 # Step 4: Convert to conversation turns format
                 turns = self._convert_to_conversation_turns(result, speaker_mapping)
 
-                return turns
+                # Return turns with duration metadata
+                return {
+                    'turns': turns,
+                    'duration_seconds': round(duration_seconds, 2),
+                    'audio_metadata': {
+                        'sample_rate': int(sample_rate),
+                        'total_samples': len(audio_array)
+                    }
+                }
 
             finally:
                 # Clean up temporary file
@@ -370,9 +424,8 @@ class ModalCanaryProvider:
         turns = []
 
         for segment in segments:
-            # Extract segment data
-            speaker_label = segment.get('speaker', 'unknown')
-            speaker_role = speaker_mapping.get(speaker_label, 'unknown')
+            # Extract segment data - keep Modal's speaker labels as-is
+            speaker = segment.get('speaker', 'unknown')
 
             # Convert timestamps from seconds to milliseconds
             start_time_ms = int(segment.get('start', 0) * 1000)
@@ -380,7 +433,7 @@ class ModalCanaryProvider:
             duration_ms = end_time_ms - start_time_ms
 
             turn = {
-                'speaker': speaker_role,
+                'speaker': speaker,
                 'text': segment.get('text', ''),
                 'timestamp': None,  # Will be set based on start_time_ms in the view
                 'start_time_ms': start_time_ms,
@@ -391,7 +444,7 @@ class ModalCanaryProvider:
                 'pii_redacted': True,  # Modal does PII redaction with <PERSON>, <DATE_TIME> tags
                 'pii_entities_detected': self._extract_pii_entities(segment.get('text', '')),
                 'metadata': {
-                    'speaker_label': speaker_label,
+                    'speaker_label': speaker,
                     'provider': 'modal_canary'
                 }
             }

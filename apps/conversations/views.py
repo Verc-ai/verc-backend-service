@@ -149,8 +149,8 @@ class UploadView(APIView):
                 session_data = {
                     "id": session_id,
                     "created_at": now,
-                    "last_event_received_at": now,
                     "status": "created",
+                    "filename": audio_file.name,
                     "call_summary_status": "not_started",
                     "call_scorecard_status": "not_started",
                     "audio_storage_path": storage_path,
@@ -160,8 +160,8 @@ class UploadView(APIView):
                         "storagePath": storage_path,
                         "uploadedAt": now,
                     },
-                    "caller_number": None,
-                    "dialed_number": None,
+                    "caller_info": None,
+                    "destination_number": None,
                     "user_id": user_id,
                     "org_id": org_id,
                 }
@@ -364,8 +364,8 @@ class SimulateView(APIView):
                     session_data = {
                         "id": session_id,
                         "created_at": now,
-                        "last_event_received_at": now,
                         "status": "created",  # Will be updated to 'transcribing' when transcription starts
+                        "filename": original_name,
                         "call_summary_status": "not_started",
                         "call_scorecard_status": "not_started",
                         "audio_storage_path": storage_path,
@@ -375,8 +375,8 @@ class SimulateView(APIView):
                             "storagePath": storage_path,
                             "uploadedAt": now,
                         },
-                        "caller_number": None,  # Audio uploads don't have phone numbers
-                        "dialed_number": None,
+                        "caller_info": None,  # Audio uploads don't have phone numbers
+                        "destination_number": None,
                         # user_id and org_id are optional - can be NULL for service_role inserts
                         # In production, extract from JWT token
                     }
