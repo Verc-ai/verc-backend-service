@@ -66,10 +66,12 @@ class LoginView(APIView):
                             config = settings.APP_SETTINGS.supabase
                             if config:
                                 profiles_table = config.profiles_table
-                                profile_result = supabase_admin.table(profiles_table).select('approved, org_id, org_name, role, display_name, avatar_url').eq('id', user.id).single().execute()
+                                logger.info(f'Fetching profile for user {user.id} from table {profiles_table}')
+                                profile_result = supabase_admin.table(profiles_table).select('approved, org_id, org_name, role, display_name, avatar_url').eq('id', user.id).limit(1).execute()
+                                logger.info(f'Profile query returned {len(profile_result.data) if profile_result.data else 0} rows')
 
-                                if profile_result.data:
-                                    profile = profile_result.data
+                                if profile_result.data and len(profile_result.data) > 0:
+                                    profile = profile_result.data[0]  # Get first row from list
                                     approved = profile.get('approved', False)
 
                                     # Check if user is approved

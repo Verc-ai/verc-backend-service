@@ -2,7 +2,7 @@
 Transcription service using AssemblyAI for audio transcription with speaker diarization.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from django.conf import settings
 import assemblyai as aai
 
@@ -147,8 +147,22 @@ class AssemblyAIProvider:
                 transcript,
                 speaker_mapping
             )
-            
-            return turns
+
+            # AssemblyAI provides audio_duration in transcript object (in seconds)
+            duration_seconds = None
+            if hasattr(transcript, 'audio_duration') and transcript.audio_duration:
+                duration_seconds = round(transcript.audio_duration, 2)
+                logger.info(f'Audio duration from AssemblyAI: {duration_seconds}s')
+
+            # Return in same format as Modal provider
+            return {
+                'turns': turns,
+                'duration_seconds': duration_seconds,
+                'audio_metadata': {
+                    'provider': 'assemblyai',
+                    'transcript_id': transcript.id if hasattr(transcript, 'id') else None
+                }
+            }
             
         except Exception as e:
             logger.error(f'Failed to transcribe audio: {e}', exc_info=True)
@@ -237,20 +251,256 @@ class AssemblyAIProvider:
         return turns
 
 
-def get_transcription_service() -> Optional[AssemblyAIProvider]:
+class ModalCanaryProvider:
+    """
+    Modal NVIDIA Canary transcription provider with speaker diarization and PII redaction.
+    Uses Modal Labs serverless platform to run NVIDIA Canary Qwen 2.5B STT model.
+    """
+
+    def __init__(self):
+        """Initialize Modal client."""
+        config = settings.APP_SETTINGS.ai
+
+        if not config.modal_enabled:
+            raise ValueError("Modal provider is not enabled")
+
+        if not config.modal_app_name:
+            raise ValueError("Modal app name not configured")
+
+        self.modal_app_name = config.modal_app_name
+
+        # Modal authentication is set at Django startup in settings/base.py
+        # This ensures Modal SDK loads with correct workspace/auth before any imports
+        logger.info(
+            f'Modal Canary provider initialized: '
+            f'app_name={self.modal_app_name}'
+        )
+
+    def is_ready(self) -> bool:
+        """Check if provider is ready to use."""
+        config = settings.APP_SETTINGS.ai
+        return config.modal_enabled and bool(config.modal_app_name)
+
+    def transcribe_with_diarization(
+        self,
+        audio_url: str,
+        speaker_mapping: Optional[Dict[str, str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Transcribe audio with speaker diarization using Modal NVIDIA Canary.
+
+        Args:
+            audio_url: URL to the audio file (signed URL from Supabase Storage)
+            speaker_mapping: Optional mapping of speaker labels (e.g., {'Speaker1': 'agent', 'Speaker2': 'customer'})
+
+        Returns:
+            List of conversation turns with speaker, text, timestamps, etc.
+        """
+        import modal
+        import httpx
+        import soundfile as sf
+        import tempfile
+        import os
+
+        if not self.is_ready():
+            raise ValueError("Modal provider not initialized")
+
+        # Don't assume speaker roles - keep Modal's labels as-is
+        if not speaker_mapping:
+            speaker_mapping = {'Speaker1': 'Speaker1', 'Speaker2': 'Speaker2'}
+
+        logger.info(f'Starting Modal Canary transcription: audio_url={audio_url[:100]}...')
+
+        try:
+            # Step 1: Download audio file from signed URL
+            logger.info(f'Downloading audio from signed URL...')
+            response = httpx.get(audio_url, timeout=60.0)
+            response.raise_for_status()
+
+            # Step 2: Save to temporary file and read with soundfile
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                temp_file.write(response.content)
+                temp_path = temp_file.name
+
+            try:
+                logger.info(f'Reading audio file with soundfile...')
+                audio_array, sample_rate = sf.read(temp_path)
+
+                # Calculate audio duration in seconds
+                duration_seconds = len(audio_array) / sample_rate
+                logger.info(f'Audio duration: {duration_seconds:.2f} seconds')
+
+                # Step 3: Call Modal NVIDIA Canary model
+                logger.info(f'Calling Modal Canary model: app={self.modal_app_name}')
+
+                # Debug: Check Modal config
+                import os as debug_os
+                logger.info(f'Modal profile: {debug_os.getenv("MODAL_PROFILE")}')
+
+                # Modal profile is set globally in Django settings (config/settings/base.py)
+                # This ensures Modal SDK uses the correct credentials from ~/.modal.toml
+
+                # Try to lookup the app first, then get the class
+                # With MODAL_PROFILE set, Modal SDK will use credentials from ~/.modal.toml
+                try:
+                    CanaryModel = modal.Cls.from_name(
+                        self.modal_app_name,
+                        "CanaryModel"
+                    )
+                    logger.info(f'Modal app lookup result: {CanaryModel}')
+                    logger.info(f'Modal app type: {type(CanaryModel)}')
+                except Exception as lookup_error:
+                    logger.error(f'Failed to lookup Modal app: {lookup_error}', exc_info=True)
+                    raise Exception(f"Modal app lookup failed: {lookup_error}")
+
+                if CanaryModel is None:
+                    raise Exception(f"Modal app '{self.modal_app_name}' returned None. Check app name and authentication.")
+
+                # Instantiate the Modal class
+                try:
+                    model = CanaryModel()
+                    logger.info(f'Modal model instance: {model}')
+                    logger.info(f'Modal model type: {type(model)}')
+                except Exception as instantiation_error:
+                    logger.error(f'Failed to instantiate Modal class: {instantiation_error}', exc_info=True)
+                    raise Exception(f"Modal class instantiation failed: {instantiation_error}")
+
+                # Call the transcribe method
+                try:
+                    result = model.transcribe.remote({
+                        "array": audio_array.tolist(),  # Convert numpy array to list for serialization
+                        "sampling_rate": int(sample_rate)
+                    })
+                except Exception as remote_error:
+                    logger.error(f'Failed to call Modal remote method: {remote_error}', exc_info=True)
+                    raise Exception(f"Modal remote call failed: {remote_error}")
+
+                logger.info(f'Modal transcription completed: {len(result.get("segments", []))} segments')
+
+                # Step 4: Convert to conversation turns format
+                turns = self._convert_to_conversation_turns(result, speaker_mapping)
+
+                # Return turns with duration metadata
+                return {
+                    'turns': turns,
+                    'duration_seconds': round(duration_seconds, 2),
+                    'audio_metadata': {
+                        'sample_rate': int(sample_rate),
+                        'total_samples': len(audio_array)
+                    }
+                }
+
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+
+        except Exception as e:
+            logger.error(f'Failed to transcribe audio with Modal: {e}', exc_info=True)
+            raise
+
+    def _convert_to_conversation_turns(
+        self,
+        modal_result: Dict[str, Any],
+        speaker_mapping: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert Modal Canary result to conversation turns format.
+
+        Args:
+            modal_result: Modal result with 'full_text' and 'segments'
+            speaker_mapping: Mapping of speaker labels to roles
+
+        Returns:
+            List of conversation turns
+        """
+        segments = modal_result.get('segments', [])
+
+        if not segments:
+            logger.warning('No segments found in Modal transcription')
+            return []
+
+        turns = []
+
+        for segment in segments:
+            # Extract segment data - keep Modal's speaker labels as-is
+            speaker = segment.get('speaker', 'unknown')
+
+            # Convert timestamps from seconds to milliseconds
+            start_time_ms = int(segment.get('start', 0) * 1000)
+            end_time_ms = int(segment.get('end', 0) * 1000)
+            duration_ms = end_time_ms - start_time_ms
+
+            turn = {
+                'speaker': speaker,
+                'text': segment.get('text', ''),
+                'timestamp': None,  # Will be set based on start_time_ms in the view
+                'start_time_ms': start_time_ms,
+                'end_time_ms': end_time_ms,
+                'duration_ms': duration_ms,
+                'confidence': None,  # Modal doesn't provide confidence scores
+                'sentiment': None,  # Modal doesn't provide sentiment (handled by OpenAI later)
+                'pii_redacted': True,  # Modal does PII redaction with <PERSON>, <DATE_TIME> tags
+                'pii_entities_detected': self._extract_pii_entities(segment.get('text', '')),
+                'metadata': {
+                    'speaker_label': speaker,
+                    'provider': 'modal_canary'
+                }
+            }
+
+            turns.append(turn)
+
+        logger.info(f'Converted {len(turns)} Modal segments to conversation turns')
+        return turns
+
+    def _extract_pii_entities(self, text: str) -> Optional[List[str]]:
+        """
+        Extract PII entity types from redacted text with tags like <PERSON>, <DATE_TIME>.
+
+        Args:
+            text: Text with PII tags
+
+        Returns:
+            List of detected PII entity types, or None if none found
+        """
+        import re
+
+        # Find all PII tags in the text
+        pii_tags = re.findall(r'<([A-Z_]+)>', text)
+
+        if not pii_tags:
+            return None
+
+        # Return unique tags
+        return list(set(pii_tags))
+
+
+def get_transcription_service() -> Optional[Union[ModalCanaryProvider, AssemblyAIProvider]]:
     """
     Get transcription service instance.
-    
+    Prioritizes Modal NVIDIA Canary if enabled, falls back to AssemblyAI.
+
     Returns:
-        AssemblyAIProvider instance if configured, None otherwise
+        ModalCanaryProvider if Modal is enabled and configured,
+        AssemblyAIProvider if Modal is disabled but AssemblyAI is configured,
+        None if neither provider is configured
     """
     try:
         config = settings.APP_SETTINGS.ai
-        if not config.assemblyai_api_key:
-            logger.warning('AssemblyAI API key not configured')
-            return None
-        
-        return AssemblyAIProvider()
+
+        # Prioritize Modal if enabled
+        if config.modal_enabled and config.modal_app_name:
+            logger.info('Using Modal NVIDIA Canary transcription provider')
+            return ModalCanaryProvider()
+
+        # Fall back to AssemblyAI
+        if config.assemblyai_api_key:
+            logger.info('Using AssemblyAI transcription provider')
+            return AssemblyAIProvider()
+
+        logger.warning('No transcription provider configured (Modal and AssemblyAI both disabled)')
+        return None
+
     except Exception as e:
         logger.error(f'Failed to create transcription service: {e}')
         return None

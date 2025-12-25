@@ -181,7 +181,7 @@ class TranscribeAudioView(APIView):
             logger.info(f'Calling AssemblyAI transcription for session {session_id}')
             
             try:
-                turns = transcription_service.transcribe_with_diarization(
+                transcription_result = transcription_service.transcribe_with_diarization(
                     audio_url=signed_url,
                     speaker_mapping=speaker_mapping
                 )
@@ -190,12 +190,21 @@ class TranscribeAudioView(APIView):
                 logger.error(error_msg, exc_info=True)
                 print(f'[TASK] ❌ {error_msg}', file=sys.stderr, flush=True)
                 raise Exception(error_msg)
-            
+
+            # Handle new dict format or legacy list format (for backwards compatibility)
+            if isinstance(transcription_result, dict):
+                turns = transcription_result.get('turns', [])
+                duration_seconds = transcription_result.get('duration_seconds')
+            else:
+                # Legacy format: just a list of turns
+                turns = transcription_result
+                duration_seconds = None
+
             if not turns:
                 raise Exception('No transcription turns returned from AssemblyAI - transcription may have failed silently')
-            
-            print(f'[TASK] ✅ Transcription completed: {len(turns)} turns', file=sys.stderr, flush=True)
-            logger.info(f'Transcription completed: {len(turns)} turns for session {session_id}')
+
+            print(f'[TASK] ✅ Transcription completed: {len(turns)} turns, duration: {duration_seconds}s', file=sys.stderr, flush=True)
+            logger.info(f'Transcription completed: {len(turns)} turns, duration: {duration_seconds}s for session {session_id}')
             
             # Step 3: Fetch session metadata to include in event payloads (matches old backend structure)
             print(f'[TASK] Fetching session metadata for event payloads...', file=sys.stderr, flush=True)
@@ -237,7 +246,39 @@ class TranscribeAudioView(APIView):
                 if text:
                     full_transcript_lines.append(f"{speaker}: {text}")
             full_transcript = '\n'.join(full_transcript_lines)
-            
+
+            # Build segments JSON (Modal format) for dedicated column storage
+            segments_json = []
+            pii_redacted = False
+            unique_speakers = set()  # Track unique speakers for speaker_count
+
+            for turn in turns:
+                # Speaker is already in Modal's format (Speaker1, Speaker2) - no mapping needed
+                speaker_label = turn.get('speaker', 'unknown')
+
+                # Track unique speakers
+                unique_speakers.add(speaker_label)
+
+                # Convert milliseconds to seconds for Modal format
+                start_seconds = turn.get('start_time_ms', 0) / 1000.0 if turn.get('start_time_ms') else 0.0
+                end_seconds = turn.get('end_time_ms', 0) / 1000.0 if turn.get('end_time_ms') else 0.0
+
+                segment = {
+                    'speaker': speaker_label,
+                    'start': start_seconds,
+                    'end': end_seconds,
+                    'text': turn.get('text', '')
+                }
+                segments_json.append(segment)
+
+                # Check if any turn has PII redaction
+                if turn.get('pii_redacted', False):
+                    pii_redacted = True
+
+            # Calculate speaker count
+            speaker_count = len(unique_speakers)
+            logger.info(f'Detected {speaker_count} unique speakers: {unique_speakers}')
+
             events = []
             
             for idx, turn in enumerate(turns):
@@ -405,11 +446,25 @@ class TranscribeAudioView(APIView):
             
             # Remove None values but keep 0, False, and empty strings
             updated_metadata = {k: v for k, v in updated_metadata.items() if v is not None}
-            
-            result = supabase.table(table_name).update({
+
+            # Prepare session update with dedicated columns for transcript, segments, and PII status
+            session_update = {
                 'status': 'transcribed',
-                'metadata': updated_metadata
-            }).eq('id', session_id).execute()
+                'metadata': updated_metadata,
+                'transcript': full_transcript,  # Store full transcript text in dedicated column
+                'segments': segments_json,  # Store segments JSON in dedicated column (Modal format)
+                'pii_redacted': pii_redacted,  # Store PII redaction status in dedicated column
+                'speaker_count': speaker_count  # Store number of unique speakers detected
+            }
+
+            # Add call_duration if available (from transcription service)
+            if duration_seconds is not None:
+                session_update['call_duration'] = duration_seconds
+                logger.info(f'Storing call duration: {duration_seconds}s for session {session_id}')
+
+            logger.info(f'Storing {speaker_count} speakers, {len(turns)} turns, duration: {duration_seconds}s')
+
+            result = supabase.table(table_name).update(session_update).eq('id', session_id).execute()
             
             print(f'[TASK] ✅ Updated session {session_id} status to transcribed with metadata summary', file=sys.stderr, flush=True)
             logger.info(f'Updated session {session_id} status to transcribed with {len(turns)} turns')
@@ -481,10 +536,13 @@ class TranscribeAudioView(APIView):
 class GenerateAIAnalysisView(APIView):
     """
     POST /api/tasks/generate-ai-analysis
-    Generate AI summary and scorecard for a call.
-    
-    Body: { sessionId }
-    
+    Generate AI summary and optionally scorecard for a call.
+
+    Body: {
+        sessionId: string (required),
+        summaryOnly: boolean (optional, default: false) - if true, only generates summary, skips scorecard
+    }
+
     Note: This endpoint is called by Google Cloud Tasks.
     Cloud Tasks will include OIDC token authentication and task headers.
     CSRF exempt because Cloud Tasks uses OIDC token authentication.
@@ -501,10 +559,11 @@ class GenerateAIAnalysisView(APIView):
             f'🟢 Cloud Tasks AI analysis request received: taskName={task_name}, queueName={queue_name}, '
             f'path={request.path}, method={request.method}'
         )
-        
+
         session_id = request.data.get('sessionId')
-        
-        print(f'[AI_TASK] Request data: sessionId={session_id}', file=sys.stderr, flush=True)
+        summary_only = request.data.get('summaryOnly', False)  # Default to False for backward compatibility
+
+        print(f'[AI_TASK] Request data: sessionId={session_id}, summaryOnly={summary_only}', file=sys.stderr, flush=True)
         
         if not session_id:
             print(f'[AI_TASK] ❌ Missing required field: sessionId', file=sys.stderr, flush=True)
@@ -531,16 +590,18 @@ class GenerateAIAnalysisView(APIView):
             config = settings.APP_SETTINGS.supabase
             table_name = config.sessions_table
             
-            print(f'[AI_TASK] Updating session {session_id} AI analysis status to in_progress', file=sys.stderr, flush=True)
-            
-            # Update both summary and scorecard status to in_progress
-            result = supabase.table(table_name).update({
-                'call_summary_status': 'in_progress',
-                'call_scorecard_status': 'in_progress'
-            }).eq('id', session_id).execute()
-            
+            print(f'[AI_TASK] Updating session {session_id} AI analysis status to in_progress (summaryOnly={summary_only})', file=sys.stderr, flush=True)
+
+            # Update status based on summaryOnly parameter
+            update_data = {'call_summary_status': 'in_progress'}
+            if not summary_only:
+                # Only update scorecard status if we're doing full analysis
+                update_data['call_scorecard_status'] = 'in_progress'
+
+            result = supabase.table(table_name).update(update_data).eq('id', session_id).execute()
+
             print(f'[AI_TASK] ✅ Updated session {session_id} AI analysis status to in_progress. Result: {result}', file=sys.stderr, flush=True)
-            logger.info(f'Updated session {session_id} AI analysis status to in_progress')
+            logger.info(f'Updated session {session_id} AI analysis status to in_progress (summaryOnly={summary_only})')
         except Exception as e:
             logger.error(f'Failed to update AI analysis status: {e}', exc_info=True)
             # Continue anyway - try to generate AI analysis
@@ -570,25 +631,30 @@ class GenerateAIAnalysisView(APIView):
                     config = settings.APP_SETTINGS.supabase
                     table_name = config.sessions_table
                     
-                    print(f'[AI_TASK] Using mock data for session {session_id} (AI service not available)', file=sys.stderr, flush=True)
-                    
+                    print(f'[AI_TASK] Using mock data for session {session_id} (AI service not available, summaryOnly={summary_only})', file=sys.stderr, flush=True)
+
                     # Update to completed (with mock data)
                     now = format_timestamp()
-                    result = supabase.table(table_name).update({
+                    mock_update = {
                         'call_summary_status': 'completed',
-                        'call_scorecard_status': 'completed',
                         'call_summary_generated_at': now,
-                        'call_scorecard_generated_at': now,
                         'call_summary': {
                             'summary': 'Mock summary - AI service not configured',
                             'key_points': ['Point 1', 'Point 2'],
                             'action_items': []
-                        },
-                        'call_scorecard': {
+                        }
+                    }
+
+                    # Only add scorecard data if not summary_only
+                    if not summary_only:
+                        mock_update['call_scorecard_status'] = 'completed'
+                        mock_update['call_scorecard_generated_at'] = now
+                        mock_update['call_scorecard'] = {
                             'overall_weighted_score': 85.0,
                             'categories': {}
                         }
-                    }).eq('id', session_id).execute()
+
+                    result = supabase.table(table_name).update(mock_update).eq('id', session_id).execute()
                     
                     print(f'[AI_TASK] ✅ Mock AI analysis completed for session {session_id}. Result: {result}', file=sys.stderr, flush=True)
                     logger.info(f'✅ AI analysis completed (mock) for session {session_id}')
@@ -598,15 +664,15 @@ class GenerateAIAnalysisView(APIView):
                         'message': 'AI analysis task processed (mock - OpenAI not configured)'
                     }, status=status.HTTP_200_OK)
                 
-                # Generate summary and scorecard in parallel
+                # Generate summary and scorecard based on summaryOnly parameter
                 summary_data = None
                 scorecard_data = None
                 summary_error = None
                 scorecard_error = None
-                
-                # Generate summary
+
+                # Generate summary (always)
                 try:
-                    logger.info(f'Generating summary for session {session_id}')
+                    logger.info(f'Generating summary for session {session_id} (summaryOnly={summary_only})')
                     summary_data = ai_service.generate_summary(session_id)
                     logger.info(f'✅ Summary generated successfully for session {session_id}')
                 except Exception as e:
@@ -619,22 +685,25 @@ class GenerateAIAnalysisView(APIView):
                         'call_summary_status': 'failed',
                         'call_summary_error': summary_error,
                     }).eq('id', session_id).execute()
-                
-                # Generate scorecard
-                try:
-                    logger.info(f'Generating scorecard for session {session_id}')
-                    scorecard_data = ai_service.generate_scorecard(session_id)
-                    logger.info(f'✅ Scorecard generated successfully for session {session_id}')
-                except Exception as e:
-                    scorecard_error = str(e)
-                    logger.error(f'❌ Scorecard generation failed for session {session_id}: {e}', exc_info=True)
-                    # Update status to failed
-                    config = settings.APP_SETTINGS.supabase
-                    table_name = config.sessions_table
-                    supabase.table(table_name).update({
-                        'call_scorecard_status': 'failed',
-                        'call_scorecard_error': scorecard_error,
-                    }).eq('id', session_id).execute()
+
+                # Generate scorecard (only if not summary_only)
+                if not summary_only:
+                    try:
+                        logger.info(f'Generating scorecard for session {session_id}')
+                        scorecard_data = ai_service.generate_scorecard(session_id)
+                        logger.info(f'✅ Scorecard generated successfully for session {session_id}')
+                    except Exception as e:
+                        scorecard_error = str(e)
+                        logger.error(f'❌ Scorecard generation failed for session {session_id}: {e}', exc_info=True)
+                        # Update status to failed
+                        config = settings.APP_SETTINGS.supabase
+                        table_name = config.sessions_table
+                        supabase.table(table_name).update({
+                            'call_scorecard_status': 'failed',
+                            'call_scorecard_error': scorecard_error,
+                        }).eq('id', session_id).execute()
+                else:
+                    logger.info(f'Skipping scorecard generation for session {session_id} (summaryOnly=True)')
                 
                 # Update session with results
                 config = settings.APP_SETTINGS.supabase
@@ -672,17 +741,20 @@ class GenerateAIAnalysisView(APIView):
                     
             except Exception as e:
                 logger.error(f'Error in AI analysis: {e}', exc_info=True)
-                # Update both to failed if service initialization failed
+                # Update to failed if service initialization failed
                 if supabase:
                     try:
                         config = settings.APP_SETTINGS.supabase
                         table_name = config.sessions_table
-                        supabase.table(table_name).update({
+                        error_update = {
                             'call_summary_status': 'failed',
-                            'call_scorecard_status': 'failed',
                             'call_summary_error': str(e),
-                            'call_scorecard_error': str(e),
-                        }).eq('id', session_id).execute()
+                        }
+                        # Only update scorecard status if not summary_only
+                        if not summary_only:
+                            error_update['call_scorecard_status'] = 'failed'
+                            error_update['call_scorecard_error'] = str(e)
+                        supabase.table(table_name).update(error_update).eq('id', session_id).execute()
                     except Exception as update_error:
                         logger.error(f'Failed to update error status: {update_error}', exc_info=True)
         else:

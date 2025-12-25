@@ -94,3 +94,6 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
+# Local development files
+local-dev-files/
+
