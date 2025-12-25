@@ -361,7 +361,6 @@ class ModalCanaryProvider:
                     model = CanaryModel()
                     logger.info(f'Modal model instance: {model}')
                     logger.info(f'Modal model type: {type(model)}')
-                    logger.info(f'Modal model.transcribe: {model.transcribe}')
                 except Exception as instantiation_error:
                     logger.error(f'Failed to instantiate Modal class: {instantiation_error}', exc_info=True)
                     raise Exception(f"Modal class instantiation failed: {instantiation_error}")
