@@ -82,7 +82,7 @@ class ScorecardView(APIView):
             # Combine both datasets
             metrics_data["scorecard_summaries"] = scorecard_summaries
 
-            logger.info(f'Scorecard data retrieved: period={metrics_data.get("period")}, total_calls={metrics_data.get("metrics", {}).get("total_calls")}')
+            logger.info(f'Scorecard data retrieved : period={metrics_data.get("period")}, total_calls={metrics_data.get("metrics", {}).get("total_calls")}')
 
             # Cache the result - 60 seconds TTL for good balance
             cache_scorecard(cache_key, metrics_data, ttl=60)
