@@ -18,7 +18,8 @@ import django
 from datetime import datetime, timezone
 
 # Setup Django
-sys.path.insert(0, os.path.dirname(__file__))
+# Add parent directory to path so we can import config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 

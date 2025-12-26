@@ -1,0 +1,68 @@
+verc-backend-service/
+│
+├── apps/                          # Django applications
+│   ├── administration/            # Admin functionality
+│   ├── ai/                        # AI services (transcription, summaries)
+│   │   └── system_prompts/        # AI prompt templates
+│   ├── analytics/                 # Analytics and reporting
+│   │   ├── services/              # Analytics services
+│   │   └── views/                 # Analytics views
+│   ├── authentication/            # Authentication
+│   ├── call_sessions/             # Call session management
+│   ├── conversations/             # Conversation management
+│   ├── core/                      # Core functionality
+│   │   ├── middleware/            # Django middleware (tenant, trace)
+│   │   ├── migrations/            # Database migrations
+│   │   ├── models/                # Core models
+│   │   │   ├── base.py
+│   │   │   ├── call.py
+│   │   │   ├── company.py
+│   │   │   ├── membership.py
+│   │   │   ├── system_prompt.py
+│   │   │   ├── transcript.py
+│   │   │   └── transcript_event.py
+│   │   └── services/              # Core services (Supabase, Cloud Tasks, etc.)
+│   ├── feature_flags/             # Feature flag management
+│   ├── tasks/                     # Task management
+│   └── twilio/                    # Twilio integration
+│       └── management/commands/   # Django management commands
+│
+├── config/                        # Django configuration
+│   ├── settings/                  # Environment-specific settings
+│   │   ├── base.py
+│   │   ├── development.py
+│   │   ├── production.py
+│   │   ├── staging.py
+│   │   └── test.py
+│   └── templates/                 # Django templates
+│
+├── tests/                         # Test files
+│   ├── test_app_boot.py           # App boot test
+│   ├── test_core_flows.py         # Core flows smoke test
+│   ├── test_db_ping.py            # DB connectivity test
+│   ├── test_db_security.py        # Security tests
+│   ├── test_db_security_simple.py
+│   ├── test_pbx_events.py
+│   ├── test_twiml_generation.py
+│   ├── test-cloud-tasks.py
+│   ├── test-supabase-query.py
+│   ├── run_security_tests.sh
+│   └── test-backend-simple.sh
+│
+├── .github/
+│   └── workflows/
+│       └── deploy.yml             # GitHub Actions deployment
+│
+├── manage.py                      # Django management script
+├── requirements.txt               # Python dependencies
+├── requirements-dev.txt           # Development dependencies
+├── Dockerfile                     # Docker configuration
+├── deploy.sh                      # Deployment script
+├── start_cloud_sql_proxy.sh       # Cloud SQL Proxy helper
+├── run-local.sh                   # Local run script
+├── run_staging_shell.sh           # Staging shell helper
+├── setup-env.sh                   # Environment setup
+├── create-env.py                  # Environment creation helpers
+├── create-user.py                 # User creation helper
+└── README.md                      # Project documentation
+

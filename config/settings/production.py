@@ -26,24 +26,6 @@ SECURE_HSTS_PRELOAD = True
 # ALLOWED_HOSTS should be set via environment variable in Cloud Run
 
 # -------------------------
-# Database (Cloud SQL - PostgreSQL)
-# -------------------------
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("DB_NAME", "verc_app"),
-        "USER": os.environ.get("DB_USER", "verc_app_user"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
-        "HOST": os.environ.get("DB_HOST", ""),
-        "PORT": os.environ.get("DB_PORT", "5432"),
-        "CONN_MAX_AGE": 600,
-        "OPTIONS": {
-            "options": "-c search_path=app,auth,public"
-        },
-    }
-}
-
-# -------------------------
 # Static files
 # -------------------------
 STATIC_ROOT = BASE_DIR / "staticfiles"
