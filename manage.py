@@ -18,6 +18,12 @@ def main():
     execute_from_command_line(sys.argv)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    # Force base settings for local commands (runserver, shell, migrate)
+    os.environ.setdefault(
+        "DJANGO_SETTINGS_MODULE",
+        "config.settings.base"
+    )
     main()
+
 

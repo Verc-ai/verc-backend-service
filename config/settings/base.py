@@ -490,6 +490,27 @@ LOGGING = {
         },
     },
 }
+# ==========================
+# CSRF & Session Security
+# ==========================
+
+if DEBUG:
+    CSRF_COOKIE_SECURE = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_TRUSTED_ORIGINS = [
+        "http://localhost",
+        "http://127.0.0.1",
+    ]
+else:
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_TRUSTED_ORIGINS = env.list(
+        "CSRF_TRUSTED_ORIGINS",
+        default=[]
+    )
+MIGRATION_MODULES = {
+    'core': 'apps.core.migrations',
+}
 
 # Export settings for use in other modules
 APP_SETTINGS = _settings
