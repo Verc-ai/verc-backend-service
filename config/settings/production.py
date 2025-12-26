@@ -38,7 +38,7 @@ DATABASES = {
         "PORT": os.environ.get("DB_PORT", "5432"),
         "CONN_MAX_AGE": 600,
         "OPTIONS": {
-            "options": "-c search_path=app"
+            "options": "-c search_path=app,auth,public"
         },
     }
 }

@@ -176,6 +176,15 @@ jobs:
 
           echo "Using Cloud Run service account: $RUN_SERVICE_ACCOUNT"
 
+          # Determine Cloud SQL instance based on environment
+          if [ "$ENV" = "production" ]; then
+            CLOUD_SQL_INSTANCE="verc-prod:us-central1:verc-prod-pg"
+          else
+            CLOUD_SQL_INSTANCE="verc-staging:us-central1:verc-staging-pg"
+          fi
+
+          echo "Using Cloud SQL instance: $CLOUD_SQL_INSTANCE"
+
           gcloud run deploy "$SERVICE" \
             --image "${{ needs.setup-build-publish.outputs.image_path }}" \
             --region "${{ env.GCP_REGION }}" \
@@ -183,6 +192,7 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --service-account "$RUN_SERVICE_ACCOUNT" \
+            --add-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
             --memory 512Mi \
             --cpu 1 \
             --min-instances 0 \
