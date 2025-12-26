@@ -22,10 +22,17 @@ env = environ.Env(
 # Read .env file if it exists
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
+# =====================================================
+# DB: Ensure Django uses app/auth schemas first
+# =====================================================
+DB_SEARCH_PATH = "-c search_path=app,auth,public"
+
 
 class DatabaseConfig(BaseModel):
     """Database configuration."""
-    url: str = Field(..., description="Database URL")
+    # ✅ FIX: url must NOT be required; you set default='' in env()
+    url: str = Field(default="", description="Database URL")
+
     engine: str = Field(default="django.db.backends.postgresql")
     name: str = ""
     user: str = ""
@@ -151,6 +158,8 @@ class AppSettings:
             password=env('DB_PASSWORD', default=''),
             host=env('DB_HOST', default=''),
             port=env('DB_PORT', default='5432'),
+            # ✅ Optional: keep any existing options you set elsewhere
+            options={},
         )
         
         # Supabase
@@ -311,13 +320,29 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
 
-# Database
+# =====================================================
+# Database (SAFE + Cloud SQL + schema search_path)
+# =====================================================
 if _settings.database.url:
     import dj_database_url
+
     DATABASES = {
-        'default': dj_database_url.parse(_settings.database.url, conn_max_age=_settings.database.conn_max_age)
+        'default': dj_database_url.parse(
+            _settings.database.url,
+            conn_max_age=_settings.database.conn_max_age,
+            engine='django.db.backends.postgresql',
+        )
     }
+
+    # Preserve any existing OPTIONS; enforce search_path
+    DATABASES['default'].setdefault('OPTIONS', {})
+    DATABASES['default']['OPTIONS']['options'] = DB_SEARCH_PATH
+
 else:
+    # Preserve any options you might set in environment/config, but enforce search_path
+    merged_options = dict(_settings.database.options or {})
+    merged_options['options'] = DB_SEARCH_PATH
+
     DATABASES = {
         'default': {
             'ENGINE': _settings.database.engine,
@@ -326,7 +351,7 @@ else:
             'PASSWORD': _settings.database.password,
             'HOST': _settings.database.host,
             'PORT': _settings.database.port,
-            'OPTIONS': _settings.database.options,
+            'OPTIONS': merged_options,
             'CONN_MAX_AGE': _settings.database.conn_max_age,
         }
     }
@@ -468,4 +493,3 @@ LOGGING = {
 
 # Export settings for use in other modules
 APP_SETTINGS = _settings
-
