@@ -185,6 +185,13 @@ jobs:
 
           echo "Using Cloud SQL instance: $CLOUD_SQL_INSTANCE"
 
+          # Determine Django secret key secret name based on environment
+          if [ "$ENV" = "production" ]; then
+            SECRET_KEY_SECRET="verc-prod-django-secret-key:latest"
+          else
+            SECRET_KEY_SECRET="verc-staging-django-secret-key:latest"
+          fi
+
           gcloud run deploy "$SERVICE" \
             --image "${{ needs.setup-build-publish.outputs.image_path }}" \
             --region "${{ env.GCP_REGION }}" \
@@ -200,7 +207,7 @@ jobs:
             --concurrency 80 \
             --timeout 300 \
             --set-env-vars "NODE_ENV=production,ENVIRONMENT=$ENV,GCP_PROJECT_ID=$PROJECT,GCP_REGION=${{ env.GCP_REGION }},GCP_TASK_QUEUE_NAME=$TASK_QUEUE,CLOUD_TASKS_ENABLED=true,CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL=cloud-tasks-invoker@$PROJECT.iam.gserviceaccount.com,ASSEMBLYAI_PII_REDACTION_ENABLED=true,ASSEMBLYAI_PII_SUBSTITUTION=entity_name,ASSEMBLYAI_GENERATE_REDACTED_AUDIO=true,DJANGO_ENV=production,CLOUD_RUN_SERVICE_URL=$SERVICE_URL,DB_NAME=verc_app,DB_USER=verc_app_user,DB_PORT=5432" \
-            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_ANON_KEY=supabase-anon-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,OPENAI_API_KEY=openai-api-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,ASSEMBLYAI_API_KEY=assemblyai-api-key:latest,TWILIO_ACCOUNT_SID=twilio-account-sid:latest,TWILIO_AUTH_TOKEN=twilio-auth-token:latest,TWILIO_PHONE_NUMBER=twilio-phone-number:latest,TWILIO_WEBHOOK_BASE_URL=TWILIO_WEBHOOK_BASE_URL:latest,DB_PASSWORD=db-password:latest,DB_HOST=db-host:latest"
+            --set-secrets "SECRET_KEY=$SECRET_KEY_SECRET,SUPABASE_URL=supabase-url:latest,SUPABASE_ANON_KEY=supabase-anon-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,OPENAI_API_KEY=openai-api-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,ASSEMBLYAI_API_KEY=assemblyai-api-key:latest,TWILIO_ACCOUNT_SID=twilio-account-sid:latest,TWILIO_AUTH_TOKEN=twilio-auth-token:latest,TWILIO_PHONE_NUMBER=twilio-phone-number:latest,TWILIO_WEBHOOK_BASE_URL=TWILIO_WEBHOOK_BASE_URL:latest,DB_PASSWORD=db-password:latest,DB_HOST=db-host:latest"
 
           # Wait a bit for deployment to complete
           echo "Waiting for deployment to stabilize..."
