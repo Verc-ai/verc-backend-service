@@ -11,12 +11,12 @@ class TranscriptEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     transcript = models.ForeignKey(Transcript, on_delete=models.CASCADE)
-    call = models.ForeignKey(Call, on_delete=models.PROTECT)
-    company = models.ForeignKey(Company, on_delete=models.PROTECT)
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    call = models.ForeignKey(Call, on_delete=models.SET_NULL, null=True, blank=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
 
     sequence_number = models.IntegerField()
-    timestamp_ms = models.BigIntegerField()
+    timestamp_ms = models.BigIntegerField(null=True, blank=True)
 
     speaker = models.TextField(null=True, blank=True)
     text_chunk = models.TextField(null=True, blank=True)
@@ -28,7 +28,7 @@ class TranscriptEvent(models.Model):
 
     class Meta:
         db_table = "transcript_events"
-        managed = False
+        managed = True
         indexes = [
             models.Index(fields=["transcript"]),
             models.Index(fields=["call"]),
@@ -36,4 +36,10 @@ class TranscriptEvent(models.Model):
             models.Index(fields=["user"]),
             models.Index(fields=["sequence_number"]),
             models.Index(fields=["created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["transcript", "sequence_number"],
+                name="transcript_events_unique_seq"
+            ),
         ]

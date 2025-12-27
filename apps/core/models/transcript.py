@@ -31,7 +31,7 @@ class Transcript(BaseModel):
 
     class Meta:
         db_table = "transcripts"
-        managed = False
+        managed = True
         indexes = [
             models.Index(fields=["call"]),
             models.Index(fields=["company"]),

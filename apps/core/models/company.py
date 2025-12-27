@@ -12,7 +12,7 @@ class Company(BaseModel):
 
     class Meta:
         db_table = "companies"
-        managed = False
+        managed = True
         indexes = [
             models.Index(fields=["slug"]),
             models.Index(fields=["created_at"]),

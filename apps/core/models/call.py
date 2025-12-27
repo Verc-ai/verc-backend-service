@@ -26,7 +26,7 @@ class Call(BaseModel):
 
     class Meta:
         db_table = "calls"
-        managed = False
+        managed = True
         indexes = [
             models.Index(fields=["company"]),
             models.Index(fields=["user"]),
