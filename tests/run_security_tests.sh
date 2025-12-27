@@ -17,7 +17,10 @@ echo "Running Security Tests for: $ENV"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
-cd "$(dirname "$0")"
+# Get script directory and project root (parent directory)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
 
 # Activate virtual environment
 if [ -d "venv" ]; then

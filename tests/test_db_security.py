@@ -6,6 +6,10 @@ Tests security features for both staging and production databases.
 import os
 import sys
 import django
+
+# Add parent directory to path so we can import config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from django.db import connection
 from django.conf import settings
 

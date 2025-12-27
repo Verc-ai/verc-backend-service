@@ -4,7 +4,11 @@ Simple Database Security Test - Run in Django Shell
 Copy and paste these commands into Django shell.
 """
 import os
+import sys
 import django
+
+# Add parent directory to path so we can import config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
